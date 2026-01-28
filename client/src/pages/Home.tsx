@@ -23,7 +23,7 @@ export default function Home() {
   const [showPreview, setShowPreview] = useState(false);
   
   // Controls state
-  const [exaggeration, setExaggeration] = useState([1.5]);
+  const [exaggeration, setExaggeration] = useState([1.25]);
   const [baseHeight, setBaseHeight] = useState([5]);
   const [modelWidth, setModelWidth] = useState([100]); // Default 100mm
   const [resolution, setResolution] = useState<"low" | "medium" | "high" | "ultra">("medium");
