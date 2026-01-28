@@ -1,21 +1,29 @@
-import { useEffect, useRef } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
-import 'leaflet-draw/dist/leaflet.draw.css';
-import 'leaflet-draw';
+import { useEffect, useRef, useState } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import "leaflet-draw/dist/leaflet.draw.css";
+import "leaflet-draw";
 
-// Fix for default marker icons in React
-import icon from 'leaflet/dist/images/marker-icon.png';
-import iconShadow from 'leaflet/dist/images/marker-shadow.png';
-
-let DefaultIcon = L.icon({
-    iconUrl: icon,
-    shadowUrl: iconShadow,
-    iconSize: [25, 41],
-    iconAnchor: [12, 41]
-});
-
-L.Marker.prototype.options.icon = DefaultIcon;
+// Define tile layers for each planet
+const TILE_LAYERS = {
+  earth: {
+    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 18
+  },
+  mars: {
+    // ESRI Mars MOLA Elevation
+    url: "https://astro.arcgis.com/arcgis/rest/services/OnMars/MOLAColor/MapServer/tile/{z}/{y}/{x}",
+    attribution: 'NASA/MOLA',
+    maxZoom: 12
+  },
+  moon: {
+    // ESRI Moon LOLA Elevation
+    url: "https://astro.arcgis.com/arcgis/rest/services/OnMoon/LRO_LOLA_Color_Global_Mosaic/MapServer/tile/{z}/{y}/{x}",
+    attribution: 'NASA/LRO/LOLA',
+    maxZoom: 12
+  }
+};
 
 interface MapProps {
   onSelectionChange: (bounds: { north: number; south: number; east: number; west: number }) => void;
@@ -24,50 +32,43 @@ interface MapProps {
 }
 
 export default function Map({ onSelectionChange, className, planet }: MapProps) {
-  const mapContainer = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<L.Map | null>(null);
-  const drawControlRef = useRef<L.Control.Draw | null>(null);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<L.Map | null>(null);
+  const tileLayerRef = useRef<L.TileLayer | null>(null);
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
+  const [isMapReady, setIsMapReady] = useState(false);
 
+  // Initialize Map
   useEffect(() => {
-    if (!mapContainer.current) return;
-    if (mapRef.current) return; // Initialize only once
+    if (!mapContainerRef.current || mapInstanceRef.current) return;
 
-    // Initialize map
-    const map = L.map(mapContainer.current).setView([40.39, -111.65], 10); // Mt. Timpanogos
-    mapRef.current = map;
+    // Fix Leaflet default icon issues
+    delete (L.Icon.Default.prototype as any)._getIconUrl;
+    L.Icon.Default.mergeOptions({
+      iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon-2x.png',
+      iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+      shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+    });
 
-    // Add tile layer
-    const getTileUrl = (p: string) => {
-      if (p === 'mars') return 'https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-mars-basemap-v0-1/all/{z}/{x}/{y}.png';
-      if (p === 'moon') return 'https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-moon-basemap-v0-1/all/{z}/{x}/{y}.png';
-      return 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-    };
+    const map = L.map(mapContainerRef.current).setView([40.39, -111.65], 11); // Mt. Timpanogos
+    mapInstanceRef.current = map;
 
-    const tileLayer = L.tileLayer(getTileUrl(planet), {
-      attribution: planet === 'earth' ? '&copy; OpenStreetMap contributors' : 'NASA/USGS/OpenPlanetary',
-      maxZoom: 18
-    }).addTo(map);
-
-    // Store reference to update later
-    (map as any)._tileLayer = tileLayer;
-
-    // Initialize drawing feature group
+    // Feature Group for drawn items
     const drawnItems = new L.FeatureGroup();
     map.addLayer(drawnItems);
     drawnItemsRef.current = drawnItems;
 
-    // Add draw control
+    // Initialize Draw Control
     const drawControl = new L.Control.Draw({
       draw: {
-        polyline: false,
         polygon: false,
+        polyline: false,
         circle: false,
-        marker: false,
         circlemarker: false,
+        marker: false,
         rectangle: {
           shapeOptions: {
-            color: '#f97316', // Orange-500
+            color: '#ff4500', // Industrial Orange
             weight: 2
           }
         }
@@ -78,72 +79,61 @@ export default function Map({ onSelectionChange, className, planet }: MapProps) 
       }
     });
     map.addControl(drawControl);
-    drawControlRef.current = drawControl;
 
-    // Handle creation
+    // Handle Draw Events
     map.on(L.Draw.Event.CREATED, (e: any) => {
-      drawnItems.clearLayers(); // Only allow one selection
       const layer = e.layer;
+      drawnItems.clearLayers(); // Only allow one selection
       drawnItems.addLayer(layer);
-      
-      const bounds = layer.getBounds();
-      onSelectionChange({
-        north: bounds.getNorth(),
-        south: bounds.getSouth(),
-        east: bounds.getEast(),
-        west: bounds.getWest()
-      });
+      updateSelection(layer);
     });
 
-    // Handle edit
     map.on(L.Draw.Event.EDITED, (e: any) => {
       e.layers.eachLayer((layer: any) => {
-        const bounds = layer.getBounds();
-        onSelectionChange({
-          north: bounds.getNorth(),
-          south: bounds.getSouth(),
-          east: bounds.getEast(),
-          west: bounds.getWest()
-        });
+        updateSelection(layer);
       });
     });
 
-    // Handle delete
-    map.on(L.Draw.Event.DELETED, () => {
-      // onSelectionChange(null); // Type doesn't allow null currently, maybe handle upstream or ignore
-    });
-
-    // Force map invalidation to resize correctly
-    setTimeout(() => {
-      map.invalidateSize();
-    }, 100);
+    setIsMapReady(true);
 
     return () => {
       map.remove();
-      mapRef.current = null;
+      mapInstanceRef.current = null;
     };
-  }, []); // Run once on mount
+  }, []);
 
-  // Effect to update tiles when planet changes
+  // Handle Planet Changes
   useEffect(() => {
-    if (mapRef.current && (mapRef.current as any)._tileLayer) {
-      const map = mapRef.current;
-      const layer = (map as any)._tileLayer;
-      
-      const getTileUrl = (p: string) => {
-        if (p === 'mars') return 'https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-mars-basemap-v0-1/all/{z}/{x}/{y}.png';
-        if (p === 'moon') return 'https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-moon-basemap-v0-1/all/{z}/{x}/{y}.png';
-        return 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-      };
+    if (!mapInstanceRef.current || !isMapReady) return;
 
-      layer.setUrl(getTileUrl(planet));
-      
-      // Update attribution
-      map.attributionControl.removeAttribution('&copy; OpenStreetMap contributors');
-      map.attributionControl.removeAttribution('NASA/USGS/OpenPlanetary');
-      map.attributionControl.addAttribution(planet === 'earth' ? '&copy; OpenStreetMap contributors' : 'NASA/USGS/OpenPlanetary');
+    const map = mapInstanceRef.current;
+    const config = TILE_LAYERS[planet];
+
+    // Remove old layer
+    if (tileLayerRef.current) {
+      map.removeLayer(tileLayerRef.current);
     }
-  }, [planet]);
 
-  return <div ref={mapContainer} className={className} />;
+    // Add new layer
+    const newLayer = L.tileLayer(config.url, {
+      attribution: config.attribution,
+      maxZoom: config.maxZoom,
+    });
+    
+    newLayer.addTo(map);
+    tileLayerRef.current = newLayer;
+
+  }, [planet, isMapReady]);
+
+  const updateSelection = (layer: L.Rectangle) => {
+    const bounds = layer.getBounds();
+    onSelectionChange({
+      north: bounds.getNorth(),
+      south: bounds.getSouth(),
+      east: bounds.getEast(),
+      west: bounds.getWest()
+    });
+  };
+
+  return <div ref={mapContainerRef} className={className} />;
 }
