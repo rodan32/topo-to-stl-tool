@@ -2,9 +2,12 @@ import { useState } from "react";
 import Layout from "@/components/Layout";
 import MapSelection from "@/components/MapSelection";
 import Controls from "@/components/Controls";
+import ModelPreview from "@/components/ModelPreview";
 import { Toaster } from "@/components/ui/sonner";
 import { toast } from "sonner";
 import { TerrainGenerator } from "@/lib/TerrainGenerator";
+import { X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface Bounds {
   north: number;
@@ -15,41 +18,79 @@ interface Bounds {
 
 export default function Home() {
   const [selectionBounds, setSelectionBounds] = useState<Bounds | null>(null);
-  const [isExporting, setIsExporting] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
   
-  // State lifted from Controls to pass to generator
+  // Controls state
   const [exaggeration, setExaggeration] = useState([1.5]);
   const [baseHeight, setBaseHeight] = useState([5]);
+  const [modelWidth, setModelWidth] = useState([100]); // Default 100mm
   const [resolution, setResolution] = useState<"low" | "medium" | "high" | "ultra">("medium");
   const [shape, setShape] = useState<"rectangle" | "oval">("rectangle");
 
   const handleSelectionChange = (bounds: Bounds) => {
     setSelectionBounds(bounds);
+    // Invalidate preview when selection changes
+    if (showPreview) {
+      setShowPreview(false);
+      setPreviewBlob(null);
+    }
   };
 
-  const handleExport = async () => {
-    if (!selectionBounds) return;
+  const generateModel = async () => {
+    if (!selectionBounds) return null;
     
-    setIsExporting(true);
-    const toastId = toast.loading("Generating STL...", {
-      description: "Fetching elevation data and building 3D model."
+    setIsProcessing(true);
+    const toastId = toast.loading("Generating 3D Model...", {
+      description: "Fetching elevation data and building mesh."
     });
     
     try {
-      // Small delay to allow UI to update
       await new Promise(resolve => setTimeout(resolve, 100));
 
       const generator = new TerrainGenerator({
         bounds: selectionBounds,
         exaggeration: exaggeration[0],
         baseHeight: baseHeight[0],
+        modelWidth: modelWidth[0],
         resolution: resolution,
         shape: shape
       });
 
       const blob = await generator.generate();
-      
-      // Trigger download
+      toast.dismiss(toastId);
+      return blob;
+    } catch (error) {
+      console.error("Generation failed:", error);
+      toast.error("Generation Failed", {
+        id: toastId,
+        description: "An error occurred while generating the model.",
+      });
+      return null;
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handlePreview = async () => {
+    const blob = await generateModel();
+    if (blob) {
+      setPreviewBlob(blob);
+      setShowPreview(true);
+    }
+  };
+
+  const handleExport = async () => {
+    // If we already have a preview, download it directly
+    let blob = previewBlob;
+    
+    // Otherwise generate it
+    if (!blob) {
+      blob = await generateModel();
+    }
+    
+    if (blob) {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -58,41 +99,57 @@ export default function Home() {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
-
-      toast.success("Export Complete", {
-        id: toastId,
+      
+      toast.success("Download Started", {
         description: "Your STL file is ready for printing.",
-        duration: 3000,
       });
-    } catch (error) {
-      console.error("Export failed:", error);
-      toast.error("Export Failed", {
-        id: toastId,
-        description: "An error occurred while generating the model.",
-        duration: 5000,
-      });
-    } finally {
-      setIsExporting(false);
     }
   };
 
   return (
     <Layout>
       <div className="relative w-full h-full">
+        {/* Map Layer */}
         <MapSelection 
           onSelectionChange={handleSelectionChange} 
           className="z-0"
         />
         
+        {/* Preview Layer Overlay */}
+        {showPreview && (
+          <div className="absolute inset-0 z-30 bg-background/95 animate-in fade-in duration-300">
+            <ModelPreview stlBlob={previewBlob} />
+            
+            <div className="absolute top-24 left-6 pointer-events-auto">
+               <Button 
+                variant="outline" 
+                size="icon"
+                onClick={() => setShowPreview(false)}
+                className="rounded-full bg-background border-primary text-primary hover:bg-primary hover:text-primary-foreground"
+              >
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+            
+            <div className="absolute top-24 left-20 bg-card/80 backdrop-blur px-4 py-2 border border-border text-xs font-mono">
+              PREVIEW MODE: {modelWidth[0]}mm WIDTH
+            </div>
+          </div>
+        )}
+        
         <Controls 
-          onExport={handleExport} 
-          isExporting={isExporting} 
+          onExport={handleExport}
+          onPreview={handlePreview}
+          isProcessing={isProcessing} 
           selectionBounds={selectionBounds}
-          // Pass state setters to Controls
+          hasPreview={!!previewBlob && showPreview}
+          
           exaggeration={exaggeration}
           setExaggeration={setExaggeration}
           baseHeight={baseHeight}
           setBaseHeight={setBaseHeight}
+          modelWidth={modelWidth}
+          setModelWidth={setModelWidth}
           resolution={resolution}
           setResolution={setResolution}
           shape={shape}

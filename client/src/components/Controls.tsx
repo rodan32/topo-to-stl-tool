@@ -4,18 +4,22 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Download, Map as MapIcon, Settings, Box, RefreshCw } from "lucide-react";
+import { Download, Map as MapIcon, Settings, Box, RefreshCw, Eye } from "lucide-react";
 
 interface ControlsProps {
   onExport: () => void;
-  isExporting: boolean;
+  onPreview: () => void;
+  isProcessing: boolean;
   selectionBounds: { north: number; south: number; east: number; west: number } | null;
+  hasPreview: boolean;
   
   // State props
   exaggeration: number[];
   setExaggeration: (val: number[]) => void;
   baseHeight: number[];
   setBaseHeight: (val: number[]) => void;
+  modelWidth: number[];
+  setModelWidth: (val: number[]) => void;
   resolution: "low" | "medium" | "high" | "ultra";
   setResolution: (val: "low" | "medium" | "high" | "ultra") => void;
   shape: "rectangle" | "oval";
@@ -24,12 +28,16 @@ interface ControlsProps {
 
 export default function Controls({ 
   onExport, 
-  isExporting, 
+  onPreview,
+  isProcessing, 
   selectionBounds,
+  hasPreview,
   exaggeration,
   setExaggeration,
   baseHeight,
   setBaseHeight,
+  modelWidth,
+  setModelWidth,
   resolution,
   setResolution,
   shape,
@@ -106,6 +114,24 @@ export default function Controls({
             />
           </div>
 
+          {/* Model Width */}
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <Label className="text-xs font-mono uppercase">Model Width</Label>
+              <span className="text-xs font-mono bg-secondary px-1 py-0.5 rounded text-primary">
+                {modelWidth[0]}mm
+              </span>
+            </div>
+            <Slider 
+              value={modelWidth} 
+              onValueChange={setModelWidth} 
+              min={50} 
+              max={300} 
+              step={5}
+              className="py-1"
+            />
+          </div>
+
           {/* Base Height */}
           <div className="space-y-3">
             <div className="flex justify-between items-center">
@@ -142,7 +168,7 @@ export default function Controls({
                 size="sm"
                 className="text-xs font-mono rounded-none h-8"
                 onClick={() => setShape("oval")}
-                disabled={true} // Disabled for V1
+                disabled={true} 
                 title="Coming soon"
               >
                 <RefreshCw className="w-3 h-3 mr-2" />
@@ -173,24 +199,40 @@ export default function Controls({
       </Card>
 
       {/* Action Panel */}
-      <Button 
-        size="lg" 
-        className="w-full rounded-none font-mono uppercase tracking-wider text-sm h-12 shadow-lg shadow-primary/20"
-        disabled={!selectionBounds || isExporting}
-        onClick={onExport}
-      >
-        {isExporting ? (
-          <>
-            <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-            Processing...
-          </>
-        ) : (
-          <>
-            <Download className="w-4 h-4 mr-2" />
-            Generate STL
-          </>
-        )}
-      </Button>
+      <div className="grid grid-cols-2 gap-2">
+        <Button 
+          size="lg" 
+          variant="outline"
+          className="w-full rounded-none font-mono uppercase tracking-wider text-xs h-12 border-primary text-primary hover:bg-primary hover:text-primary-foreground"
+          disabled={!selectionBounds || isProcessing}
+          onClick={onPreview}
+        >
+          {isProcessing ? (
+            <RefreshCw className="w-4 h-4 animate-spin" />
+          ) : (
+            <>
+              <Eye className="w-4 h-4 mr-2" />
+              Preview
+            </>
+          )}
+        </Button>
+        
+        <Button 
+          size="lg" 
+          className="w-full rounded-none font-mono uppercase tracking-wider text-xs h-12 shadow-lg shadow-primary/20"
+          disabled={!selectionBounds || isProcessing || !hasPreview}
+          onClick={onExport}
+        >
+          <Download className="w-4 h-4 mr-2" />
+          Download
+        </Button>
+      </div>
+      
+      {!hasPreview && selectionBounds && (
+        <div className="text-xs text-center text-muted-foreground font-mono">
+          Preview model to enable download
+        </div>
+      )}
     </div>
   );
 }

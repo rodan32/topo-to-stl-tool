@@ -10,14 +10,13 @@ interface TerrainOptions {
   };
   exaggeration: number;
   baseHeight: number;
+  modelWidth: number; // New option in mm
   resolution: "low" | "medium" | "high" | "ultra";
   shape: "rectangle" | "oval";
 }
 
-// Mapbox Terrain-RGB tiles encoding: height = -10000 + ((R * 256 * 256 + G * 256 + B) * 0.1)
 // AWS Terrarium encoding: (r * 256 + g + b / 256) - 32768
 const decodeElevation = (r: number, g: number, b: number): number => {
-  // Using AWS Terrarium format since we switched to that source
   return (r * 256 + g + b / 256) - 32768;
 };
 
@@ -50,7 +49,7 @@ export class TerrainGenerator {
 
   // Generate the STL file
   async generate(): Promise<Blob> {
-    const { bounds, exaggeration, baseHeight, shape } = this.options;
+    const { bounds, exaggeration, baseHeight, modelWidth, shape } = this.options;
     const zoom = this.getZoomLevel();
 
     // Calculate tile range
@@ -85,16 +84,19 @@ export class TerrainGenerator {
     const data = imageData.data;
 
     // Create geometry
-    // Downsample for performance if needed, but for now we'll use a reasonable segment count
     // Calculate aspect ratio of the selected area
     const latSpan = bounds.north - bounds.south;
     const lonSpan = bounds.east - bounds.west;
-    const aspectRatio = lonSpan / latSpan; // Simplification, ideally account for projection distortion
+    const aspectRatio = lonSpan / latSpan;
 
     const segmentsX = Math.min(width, 256); // Limit vertices for browser performance
     const segmentsY = Math.round(segmentsX / aspectRatio);
 
-    const geometry = new THREE.PlaneGeometry(100, 100 / aspectRatio, segmentsX - 1, segmentsY - 1);
+    // Use user-defined modelWidth (mm)
+    // Height (mm) = Width / AspectRatio
+    const modelHeight = modelWidth / aspectRatio;
+
+    const geometry = new THREE.PlaneGeometry(modelWidth, modelHeight, segmentsX - 1, segmentsY - 1);
     const vertices = geometry.attributes.position.array;
 
     // Apply elevation to vertices
@@ -102,12 +104,6 @@ export class TerrainGenerator {
     
     // First pass: find minimum elevation
     for (let i = 0; i < vertices.length; i += 3) {
-      // Map vertex coordinates to image coordinates
-      // PlaneGeometry is centered at 0,0. x goes -width/2 to width/2, y goes height/2 to -height/2
-      // UV coordinates would be better but we can map manually
-      
-      // Get normalized coordinates (0 to 1)
-      // Vertices are ordered row by row from top-left
       const col = (i / 3) % segmentsX;
       const row = Math.floor((i / 3) / segmentsX);
       
@@ -138,30 +134,26 @@ export class TerrainGenerator {
       
       const elev = decodeElevation(r, g, b);
       
-      // Apply exaggeration and base height
       const centerLat = (bounds.north + bounds.south) / 2;
-      // const metersPerDegreeLat = 111132.954 - 559.822 * Math.cos(2 * centerLat * Math.PI / 180);
       const metersPerDegreeLon = 111132.954 * Math.cos(centerLat * Math.PI / 180);
       
       const realWidthMeters = lonSpan * metersPerDegreeLon;
-      const scale = 100 / realWidthMeters;
       
-      vertices[i + 2] = (elev - minElev) * exaggeration * scale * 1000 + baseHeight; 
+      // Scale calculation:
+      // modelWidth (mm) corresponds to realWidthMeters (m)
+      // We want to convert elevation (m) to model units (mm)
+      // Scale factor = modelWidth / realWidthMeters
+      const scale = modelWidth / realWidthMeters;
+      
+      // Z (mm) = (Elevation (m) - MinElev (m)) * Exaggeration * Scale + BaseHeight (mm)
+      // Note: Scale is (mm / m). So m * (mm/m) = mm. Correct.
+      
+      vertices[i + 2] = (elev - minElev) * exaggeration * scale + baseHeight; 
     }
 
-    geometry.computeVertexNormals();
-
-    // Constructing a solid mesh:
-    // 1. Grid of vertices for top (terrain)
-    // 2. Grid of vertices for bottom (flat at z=0)
-    // 3. Triangles for top
-    // 4. Triangles for bottom
-    // 5. Triangles for sides (North, South, East, West)
-    
-    // Let's do this with a custom BufferGeometry
+    // Constructing a solid mesh with correct winding order
     const solidGeo = new THREE.BufferGeometry();
     const numPoints = segmentsX * segmentsY;
-    // const numIndices = (segmentsX - 1) * (segmentsY - 1) * 6;
     
     // Vertices: Top grid + Bottom grid
     const solidVertices = new Float32Array(numPoints * 3 * 2); 
@@ -183,7 +175,7 @@ export class TerrainGenerator {
     // Indices
     const indices = [];
     
-    // Top surface
+    // Top surface (Points Up/Z+)
     for (let y = 0; y < segmentsY - 1; y++) {
       for (let x = 0; x < segmentsX - 1; x++) {
         const a = y * segmentsX + x;
@@ -191,14 +183,15 @@ export class TerrainGenerator {
         const c = (y + 1) * segmentsX + x;
         const d = (y + 1) * segmentsX + x + 1;
         
-        // a, b, d
-        // d, c, a
-        indices.push(a, b, d);
-        indices.push(d, c, a);
+        // a(TL), b(TR), c(BL), d(BR)
+        // Triangle 1: a, c, b (CCW)
+        indices.push(a, c, b);
+        // Triangle 2: b, c, d (CCW)
+        indices.push(b, c, d);
       }
     }
     
-    // Bottom surface (winding order reversed to face down)
+    // Bottom surface (Points Down/Z-)
     const offset = numPoints;
     for (let y = 0; y < segmentsY - 1; y++) {
       for (let x = 0; x < segmentsX - 1; x++) {
@@ -207,10 +200,9 @@ export class TerrainGenerator {
         const c = offset + (y + 1) * segmentsX + x;
         const d = offset + (y + 1) * segmentsX + x + 1;
         
-        // a, c, d
-        // d, b, a
-        indices.push(a, c, d);
-        indices.push(d, b, a);
+        // Reverse of top: a, b, c and b, d, c
+        indices.push(a, b, c);
+        indices.push(b, d, c);
       }
     }
     
@@ -221,10 +213,11 @@ export class TerrainGenerator {
       const botA = offset + x;
       const botB = offset + x + 1;
       
-      // topA, botA, botB
-      // botB, topB, topA
-      indices.push(topA, botA, botB);
-      indices.push(botB, topB, topA);
+      // topA(L), topB(R), botA(L), botB(R)
+      // Triangle 1: topA, topB, botA
+      indices.push(topA, topB, botA);
+      // Triangle 2: topB, botB, botA
+      indices.push(topB, botB, botA);
     }
     
     // South wall (y = segmentsY - 1)
@@ -235,10 +228,11 @@ export class TerrainGenerator {
       const botA = offset + rowStart + x;
       const botB = offset + rowStart + x + 1;
       
-      // topA, topB, botB
-      // botB, botA, topA
-      indices.push(topA, topB, botB);
-      indices.push(botB, botA, topA);
+      // topA(L), topB(R), botA(L), botB(R)
+      // Triangle 1: topA, botA, topB
+      indices.push(topA, botA, topB);
+      // Triangle 2: topB, botA, botB
+      indices.push(topB, botA, botB);
     }
     
     // West wall (x = 0)
@@ -248,10 +242,11 @@ export class TerrainGenerator {
       const botA = offset + y * segmentsX;
       const botB = offset + (y + 1) * segmentsX;
       
-      // topA, topB, botB
-      // botB, botA, topA
-      indices.push(topA, topB, botB);
-      indices.push(botB, botA, topA);
+      // topA(Top), topB(Bot), botA(Top), botB(Bot)
+      // Triangle 1: topA, botA, topB
+      indices.push(topA, botA, topB);
+      // Triangle 2: topB, botA, botB
+      indices.push(topB, botA, botB);
     }
     
     // East wall (x = segmentsX - 1)
@@ -262,28 +257,17 @@ export class TerrainGenerator {
       const botA = offset + y * segmentsX + colOffset;
       const botB = offset + (y + 1) * segmentsX + colOffset;
       
-      // topA, botA, botB
-      // botB, topB, topA
-      indices.push(topA, botA, botB);
-      indices.push(botB, topB, topA);
+      // topA(Top), topB(Bot), botA(Top), botB(Bot)
+      // Triangle 1: topA, topB, botA
+      indices.push(topA, topB, botA);
+      // Triangle 2: topB, botB, botA
+      indices.push(topB, botB, botA);
     }
     
     solidGeo.setIndex(indices);
     solidGeo.computeVertexNormals();
     
     const mesh = new THREE.Mesh(solidGeo, new THREE.MeshStandardMaterial());
-    
-    // Oval shape handling
-    if (shape === "oval") {
-      // Create an oval geometry and intersect? Too complex for client-side JS quickly.
-      // Instead, we can modify the vertices of the box to form an oval cylinder.
-      // But the grid is rectangular.
-      // We'd need to distort the grid or trim it.
-      // Trimming requires re-triangulation.
-      // Distortion (mapping square grid to circle) preserves topology but distorts terrain.
-      // Let's stick to rectangle only for MVP V1 to ensure robustness.
-      console.warn("Oval shape not fully implemented in V1, defaulting to rectangle");
-    }
     
     // Export
     const exporter = new STLExporter();
@@ -296,8 +280,6 @@ export class TerrainGenerator {
     return new Promise((resolve) => {
       const img = new Image();
       img.crossOrigin = "Anonymous";
-      // Use AWS Terrain Tiles (free, no key needed)
-      // Format: https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png
       img.src = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
       
       img.onload = () => {
@@ -307,7 +289,6 @@ export class TerrainGenerator {
       
       img.onerror = () => {
         console.error(`Failed to load tile ${z}/${x}/${y}`);
-        // Resolve anyway to continue with partial data
         resolve();
       };
     });
