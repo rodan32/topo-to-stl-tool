@@ -59,7 +59,16 @@ class STLExporter {
 
 		if ( binary === true ) {
 
-			const bufferLength = triangles * 2 + triangles * 3 * 4 * 4 + 80 + 4;
+			// STL binary format:
+			// 80 bytes header
+			// 4 bytes triangle count
+			// 50 bytes per triangle (normal(12) + v1(12) + v2(12) + v3(12) + attr(2))
+			
+			// Previous code had extra * 2 which was wrong, and extra * 4 which was also suspicious?
+			// Old: triangles * 2 + triangles * 3 * 4 * 4 + 80 + 4
+			// Correct: 80 + 4 + (triangles * 50)
+			
+			const bufferLength = 80 + 4 + ( triangles * 50 );
 			const arrayBuffer = new ArrayBuffer( bufferLength );
 			output = new DataView( arrayBuffer );
 			output.setUint32( 80, triangles, true );

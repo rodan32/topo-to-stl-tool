@@ -117,7 +117,16 @@ export default function ModelPreview({ stlBlob, className }: ModelPreviewProps) 
     const loader = new STLLoader();
     const url = URL.createObjectURL(stlBlob);
 
+    console.log("Loading STL preview from blob:", stlBlob.size, "bytes");
+
     loader.load(url, (geometry) => {
+      console.log("STL loaded successfully. Vertices:", geometry.attributes.position.count);
+      
+      if (geometry.attributes.position.count === 0) {
+        console.error("STL geometry is empty!");
+        return;
+      }
+
       // Center geometry
       geometry.center();
       geometry.computeVertexNormals();
@@ -142,6 +151,8 @@ export default function ModelPreview({ stlBlob, className }: ModelPreviewProps) 
       const size = box.getSize(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z);
       
+      console.log("Model dimensions:", size);
+
       if (controlsRef.current && cameraRef.current) {
         const distance = maxDim * 2.5;
         // Position camera nicely
