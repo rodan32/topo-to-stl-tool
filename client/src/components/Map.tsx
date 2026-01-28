@@ -1,134 +1,149 @@
-/**
- * GOOGLE MAPS FRONTEND INTEGRATION - ESSENTIAL GUIDE
- *
- * USAGE FROM PARENT COMPONENT:
- * ======
- *
- * const mapRef = useRef<MapViewHandle>(null);
- *
- * <MapView
- *   ref={mapRef}
- *   defaultCenter={{ lat: 40.7128, lng: -74.0060 }}
- *   defaultZoom={15}
- *   onMapReady={(map) => {
- *     // map is ready
- *   }}
- * />
- */
+import { useEffect, useRef } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import 'leaflet-draw/dist/leaflet.draw.css';
+import 'leaflet-draw';
 
-/// <reference types="@types/google.maps" />
+// Fix for default marker icons in React
+import icon from 'leaflet/dist/images/marker-icon.png';
+import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 
-import { useEffect, useRef, forwardRef, useImperativeHandle } from "react";
-import { usePersistFn } from "@/hooks/usePersistFn";
-import { cn } from "@/lib/utils";
-
-declare global {
-  interface Window {
-    google?: typeof google;
-  }
-}
-
-const API_KEY = import.meta.env.VITE_FRONTEND_FORGE_API_KEY;
-const FORGE_BASE_URL =
-  import.meta.env.VITE_FRONTEND_FORGE_API_URL ||
-  "https://forge.butterfly-effect.dev";
-const MAPS_PROXY_URL = `${FORGE_BASE_URL}/v1/maps/proxy`;
-
-// Singleton promise to prevent multiple script loads
-let loadPromise: Promise<void> | null = null;
-
-function loadMapScript() {
-  if (loadPromise) return loadPromise;
-  
-  loadPromise = new Promise((resolve) => {
-    // Check if google maps is already available
-    if (window.google?.maps) {
-      resolve();
-      return;
-    }
-
-    const script = document.createElement("script");
-    // Add drawing library for rectangle selection
-    script.src = `${MAPS_PROXY_URL}/maps/api/js?key=${API_KEY}&v=weekly&libraries=marker,places,geocoding,geometry,drawing`;
-    script.async = true;
-    script.crossOrigin = "anonymous";
-    script.onload = () => {
-      resolve();
-    };
-    script.onerror = () => {
-      console.error("Failed to load Google Maps script");
-      loadPromise = null; // Reset promise on error so we can try again
-    };
-    document.head.appendChild(script);
-  });
-  
-  return loadPromise;
-}
-
-export interface MapViewHandle {
-  map: google.maps.Map | null;
-}
-
-interface MapViewProps {
-  className?: string;
-  defaultCenter?: google.maps.LatLngLiteral;
-  defaultZoom?: number;
-  onMapReady?: (map: google.maps.Map) => void;
-  options?: google.maps.MapOptions;
-}
-
-const MapView = forwardRef<MapViewHandle, MapViewProps>(({
-  className,
-  defaultCenter = { lat: 37.7749, lng: -122.4194 },
-  defaultZoom = 12,
-  onMapReady,
-  options,
-}, ref) => {
-  const mapContainer = useRef<HTMLDivElement>(null);
-  const mapInstance = useRef<google.maps.Map | null>(null);
-
-  useImperativeHandle(ref, () => ({
-    get map() {
-      return mapInstance.current;
-    }
-  }));
-
-  const init = usePersistFn(async () => {
-    await loadMapScript();
-    
-    if (!mapContainer.current) {
-      console.error("Map container not found");
-      return;
-    }
-    
-    // If map already exists, don't re-initialize
-    if (mapInstance.current) return;
-
-    mapInstance.current = new window.google.maps.Map(mapContainer.current, {
-      zoom: defaultZoom,
-      center: defaultCenter,
-      mapTypeControl: true,
-      fullscreenControl: true,
-      zoomControl: true,
-      streetViewControl: true,
-      mapId: "DEMO_MAP_ID",
-      ...options,
-    });
-    
-    if (onMapReady) {
-      onMapReady(mapInstance.current);
-    }
-  });
-
-  useEffect(() => {
-    init();
-  }, [init]);
-
-  return (
-    <div ref={mapContainer} className={cn("w-full h-[500px]", className)} />
-  );
+let DefaultIcon = L.icon({
+    iconUrl: icon,
+    shadowUrl: iconShadow,
+    iconSize: [25, 41],
+    iconAnchor: [12, 41]
 });
 
-MapView.displayName = "MapView";
+L.Marker.prototype.options.icon = DefaultIcon;
 
-export default MapView;
+interface MapProps {
+  onSelectionChange: (bounds: { north: number; south: number; east: number; west: number }) => void;
+  className?: string;
+  planet: "earth" | "mars" | "moon";
+}
+
+export default function Map({ onSelectionChange, className, planet }: MapProps) {
+  const mapContainer = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const drawControlRef = useRef<L.Control.Draw | null>(null);
+  const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
+
+  useEffect(() => {
+    if (!mapContainer.current) return;
+    if (mapRef.current) return; // Initialize only once
+
+    // Initialize map
+    const map = L.map(mapContainer.current).setView([40.39, -111.65], 10); // Mt. Timpanogos
+    mapRef.current = map;
+
+    // Add tile layer
+    const getTileUrl = (p: string) => {
+      if (p === 'mars') return 'https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-mars-basemap-v0-1/all/{z}/{x}/{y}.png';
+      if (p === 'moon') return 'https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-moon-basemap-v0-1/all/{z}/{x}/{y}.png';
+      return 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    };
+
+    const tileLayer = L.tileLayer(getTileUrl(planet), {
+      attribution: planet === 'earth' ? '&copy; OpenStreetMap contributors' : 'NASA/USGS/OpenPlanetary',
+      maxZoom: 18
+    }).addTo(map);
+
+    // Store reference to update later
+    (map as any)._tileLayer = tileLayer;
+
+    // Initialize drawing feature group
+    const drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+    drawnItemsRef.current = drawnItems;
+
+    // Add draw control
+    const drawControl = new L.Control.Draw({
+      draw: {
+        polyline: false,
+        polygon: false,
+        circle: false,
+        marker: false,
+        circlemarker: false,
+        rectangle: {
+          shapeOptions: {
+            color: '#f97316', // Orange-500
+            weight: 2
+          }
+        }
+      },
+      edit: {
+        featureGroup: drawnItems,
+        remove: true
+      }
+    });
+    map.addControl(drawControl);
+    drawControlRef.current = drawControl;
+
+    // Handle creation
+    map.on(L.Draw.Event.CREATED, (e: any) => {
+      drawnItems.clearLayers(); // Only allow one selection
+      const layer = e.layer;
+      drawnItems.addLayer(layer);
+      
+      const bounds = layer.getBounds();
+      onSelectionChange({
+        north: bounds.getNorth(),
+        south: bounds.getSouth(),
+        east: bounds.getEast(),
+        west: bounds.getWest()
+      });
+    });
+
+    // Handle edit
+    map.on(L.Draw.Event.EDITED, (e: any) => {
+      e.layers.eachLayer((layer: any) => {
+        const bounds = layer.getBounds();
+        onSelectionChange({
+          north: bounds.getNorth(),
+          south: bounds.getSouth(),
+          east: bounds.getEast(),
+          west: bounds.getWest()
+        });
+      });
+    });
+
+    // Handle delete
+    map.on(L.Draw.Event.DELETED, () => {
+      // onSelectionChange(null); // Type doesn't allow null currently, maybe handle upstream or ignore
+    });
+
+    // Force map invalidation to resize correctly
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 100);
+
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
+  }, []); // Run once on mount
+
+  // Effect to update tiles when planet changes
+  useEffect(() => {
+    if (mapRef.current && (mapRef.current as any)._tileLayer) {
+      const map = mapRef.current;
+      const layer = (map as any)._tileLayer;
+      
+      const getTileUrl = (p: string) => {
+        if (p === 'mars') return 'https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-mars-basemap-v0-1/all/{z}/{x}/{y}.png';
+        if (p === 'moon') return 'https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-moon-basemap-v0-1/all/{z}/{x}/{y}.png';
+        return 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+      };
+
+      layer.setUrl(getTileUrl(planet));
+      
+      // Update attribution
+      map.attributionControl.removeAttribution('&copy; OpenStreetMap contributors');
+      map.attributionControl.removeAttribution('NASA/USGS/OpenPlanetary');
+      map.attributionControl.addAttribution(planet === 'earth' ? '&copy; OpenStreetMap contributors' : 'NASA/USGS/OpenPlanetary');
+    }
+  }, [planet]);
+
+  return <div ref={mapContainer} className={className} />;
+}

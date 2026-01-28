@@ -13,11 +13,25 @@ interface TerrainOptions {
   modelWidth: number; // New option in mm
   resolution: "low" | "medium" | "high" | "ultra";
   shape: "rectangle" | "oval";
+  planet: "earth" | "mars" | "moon";
 }
 
 // AWS Terrarium encoding: (r * 256 + g + b / 256) - 32768
-const decodeElevation = (r: number, g: number, b: number): number => {
+const decodeElevationEarth = (r: number, g: number, b: number): number => {
   return (r * 256 + g + b / 256) - 32768;
+};
+
+// Simple grayscale decoding for Moon/Mars (assuming brightness = height)
+// We need to calibrate this based on the source.
+// MOLA (Mars) and LOLA (Moon) usually map grayscale to a range.
+// For now, we'll assume a normalized 0-255 range maps to a generic 0-10000m relative height for visual shape,
+// as exact absolute elevation requires specific metadata per tile which we don't have.
+// However, to make it printable, relative shape is what matters.
+const decodeElevationPlanetary = (r: number, g: number, b: number): number => {
+  // Use average of RGB for grayscale value
+  const val = (r + g + b) / 3;
+  // Map 0-255 to approx 0-20000m range (just a guess to get reasonable mountains)
+  return val * 100; 
 };
 
 // Calculate tile coordinates from lat/lon and zoom
@@ -50,7 +64,7 @@ export class TerrainGenerator {
   // Generate the STL file
   async generate(): Promise<Blob> {
     console.log("Starting Terrain Generation", this.options);
-    const { bounds, exaggeration, baseHeight, modelWidth, shape } = this.options;
+    const { bounds, exaggeration, baseHeight, modelWidth, shape, planet } = this.options;
     const zoom = this.getZoomLevel();
 
     // Calculate tile range
@@ -78,7 +92,7 @@ export class TerrainGenerator {
     const tilePromises = [];
     for (let x = xMin; x <= xMax; x++) {
       for (let y = yMin; y <= yMax; y++) {
-        tilePromises.push(this.loadTile(x, y, zoom, x - xMin, y - yMin, ctx));
+        tilePromises.push(this.loadTile(x, y, zoom, x - xMin, y - yMin, ctx, planet));
       }
     }
     
@@ -127,7 +141,11 @@ export class TerrainGenerator {
       const g = data[index + 1];
       const b = data[index + 2];
       
-      return decodeElevation(r, g, b);
+      if (planet === 'earth') {
+        return decodeElevationEarth(r, g, b);
+      } else {
+        return decodeElevationPlanetary(r, g, b);
+      }
     };
 
     // 1. Calculate Min/Max Elevation for scaling
@@ -158,6 +176,20 @@ export class TerrainGenerator {
     const realWidthMeters = lonSpan * metersPerDegreeLon;
     const scale = modelWidth / realWidthMeters; // mm per meter
 
+    // For planetary, since we don't have real meters, we normalize to a visually pleasing range
+    // If planet != earth, we ignore realWidthMeters and just map min-max to a reasonable Z-height relative to width
+    // e.g. Max height = 10% of width * exaggeration
+    let finalScale = scale;
+    if (planet !== 'earth') {
+       const elevRange = maxElev - minElev;
+       if (elevRange === 0) finalScale = 1;
+       else {
+           // Target a base relief of ~15mm for 100mm width at 1x exaggeration
+           const targetRelief = modelWidth * 0.15; 
+           finalScale = targetRelief / elevRange;
+       }
+    }
+
     // 2. Generate Vertices & Indices
     // We need a map from (x,y) to vertexIndex because oval shape skips points
     const gridMap = new Int32Array(segmentsX * segmentsY).fill(-1);
@@ -176,15 +208,10 @@ export class TerrainGenerator {
         }
 
         const elev = getElevation(x, y);
-        const z = (elev - minElev) * exaggeration * scale + baseHeight;
+        const z = (elev - minElev) * exaggeration * finalScale + baseHeight;
 
         // Position centered at 0,0
         const px = (x / (segmentsX - 1)) * modelWidth - (modelWidth / 2);
-        // Flip Y to match 3D coords (North is +Y usually, but image 0 is top)
-        // Let's keep image coordinates logic: 0 is top (North), height is bottom (South)
-        // In 3D: usually Y is up (elevation). Let's use Z for elevation, X/Y for plane.
-        // Image Y=0 -> North. Image Y=max -> South.
-        // Let's map Image Y to 3D -Y so North is +Y relative to South.
         const py = -((y / (segmentsY - 1)) * modelHeight - (modelHeight / 2));
 
         vertices.push(px, py, z);
@@ -195,19 +222,12 @@ export class TerrainGenerator {
     const numTopVertices = vertices.length / 3;
 
     // Generate Bottom Surface Vertices (Same X,Y, but Z=0)
-    // We just duplicate the top vertices logic but set Z=0
     for (let i = 0; i < numTopVertices; i++) {
         vertices.push(vertices[i*3], vertices[i*3+1], 0);
     }
 
     // 3. Generate Triangles
-    // Helper to add quad (two triangles)
     const addQuad = (v1: number, v2: number, v3: number, v4: number) => {
-        // v1--v2
-        // |  / |
-        // | /  |
-        // v4--v3
-        // CCW winding
         indices.push(v1, v4, v2);
         indices.push(v2, v4, v3);
     };
@@ -220,7 +240,6 @@ export class TerrainGenerator {
         const idx3 = gridMap[(y + 1) * segmentsX + x + 1]; // BR
         const idx4 = gridMap[(y + 1) * segmentsX + x];     // BL
 
-        // Only create quad if all 4 vertices exist (inside oval)
         if (idx1 !== -1 && idx2 !== -1 && idx3 !== -1 && idx4 !== -1) {
              addQuad(idx1, idx2, idx3, idx4);
         }
@@ -237,137 +256,47 @@ export class TerrainGenerator {
         const idx4 = gridMap[(y + 1) * segmentsX + x];     // BL
 
         if (idx1 !== -1 && idx2 !== -1 && idx3 !== -1 && idx4 !== -1) {
-             // Bottom is reversed: v1, v2, v3, v4 -> v1, v2, v4, v3 (swap last two for quad func? no just pass in reverse order)
-             // Expected: v1, v4, v3, v2 (CW from top view = CCW from bottom view)
-             // Let's just use manual indices
-             // Quad: 1-2-3-4
-             // Tri 1: 1, 2, 4 (CW) -> Bottom View CCW
-             // Tri 2: 2, 3, 4 (CW) -> Bottom View CCW
              indices.push(offset + idx1, offset + idx2, offset + idx4);
              indices.push(offset + idx2, offset + idx3, offset + idx4);
         }
       }
     }
 
-    // Walls
-    // For Rectangle: we iterate edges.
-    // For Oval: we iterate all valid pixels and check neighbors. If neighbor is invalid (-1), it's a boundary.
-    
-    // Directions: Right, Bottom, Left, Top
-    const dx = [1, 0, -1, 0];
-    const dy = [0, 1, 0, -1];
-
-    for (let y = 0; y < segmentsY; y++) {
-      for (let x = 0; x < segmentsX; x++) {
-        const currentIdx = gridMap[y * segmentsX + x];
-        if (currentIdx === -1) continue; // Skip invalid points
-
-        // Check 4 neighbors
-        for (let d = 0; d < 4; d++) {
-            const nx = x + dx[d];
-            const ny = y + dy[d];
-            
-            let isBoundary = false;
-            
-            // Check if neighbor is out of bounds or invalid
-            if (nx < 0 || nx >= segmentsX || ny < 0 || ny >= segmentsY) {
-                isBoundary = true;
-            } else if (gridMap[ny * segmentsX + nx] === -1) {
-                isBoundary = true;
-            }
-
-            if (isBoundary) {
-                // Create wall face for this edge
-                // Current Top: currentIdx
-                // Current Bot: offset + currentIdx
-                // Next Top: ? We need the next vertex along the perimeter.
-                // Actually, standard grid approach for walls:
-                // If we are at (x,y) and neighbor (nx, ny) is missing, we build a wall face facing that direction.
-                
-                // Let's define the two vertices of the edge on the current cell
-                // 0: Right edge (TR -> BR)
-                // 1: Bottom edge (BR -> BL)
-                // 2: Left edge (BL -> TL)
-                // 3: Top edge (TL -> TR)
-                // Note: We represent the cell as a point in our vertex grid. 
-                // Wait, our vertices ARE the grid points. 
-                // So a "boundary" is an edge between two valid vertices that connects to an invalid region?
-                // No, in vertex-based heightmaps, a "wall" is formed along the boundary line of valid vertices.
-                
-                // Oval Logic:
-                // We need to find the "boundary loop" of vertices.
-                // Simple approach: Iterate all quads. If a quad edge connects a valid vertex to another valid vertex, 
-                // but is NOT shared by another valid quad (or is on the edge of the grid), it is a boundary edge.
-                
-                // Let's simplify.
-                // We just check Right and Bottom neighbors for every vertex.
-                // If both are valid, we have a line segment.
-                // If that segment is a boundary, we extrude it down.
-                
-                // Better: 
-                // Iterate all valid QUADS (cells).
-                // For each edge of the quad (Top, Right, Bottom, Left), check if the adjacent quad exists.
-                // If NOT, that edge is a wall.
-                
-                // But wait, our gridMap stores VERTEX indices.
-                // A quad is formed by (x,y), (x+1,y), (x+1,y+1), (x,y+1).
-                // Let's iterate all potential quads (x: 0..W-2, y: 0..H-2).
-            }
-        }
-      }
-    }
-
     // Wall Generation (Robust Method)
-    // Iterate all potential grid squares (cells) defined by 4 vertices
     for (let y = 0; y < segmentsY - 1; y++) {
       for (let x = 0; x < segmentsX - 1; x++) {
-        // Indices of the 4 corners of this cell
         const tl = gridMap[y * segmentsX + x];
         const tr = gridMap[y * segmentsX + x + 1];
         const br = gridMap[(y + 1) * segmentsX + x + 1];
         const bl = gridMap[(y + 1) * segmentsX + x];
 
-        // Check if this cell is valid (all 4 corners exist)
         const isCellValid = (tl !== -1 && tr !== -1 && br !== -1 && bl !== -1);
 
         if (isCellValid) {
-            // Check 4 neighbors to see if they are invalid (or out of bounds)
-            // If neighbor is invalid, build a wall on the shared edge
-
             // 1. Top Neighbor (y-1)
             let topValid = false;
             if (y > 0) {
-                const n_bl = gridMap[(y - 1 + 1) * segmentsX + x]; // same as tl
-                const n_br = gridMap[(y - 1 + 1) * segmentsX + x + 1]; // same as tr
+                const n_bl = gridMap[(y - 1 + 1) * segmentsX + x]; 
+                const n_br = gridMap[(y - 1 + 1) * segmentsX + x + 1]; 
                 const n_tl = gridMap[(y - 1) * segmentsX + x];
                 const n_tr = gridMap[(y - 1) * segmentsX + x + 1];
                 if (n_tl !== -1 && n_tr !== -1 && n_bl !== -1 && n_br !== -1) topValid = true;
             }
             if (!topValid) {
-                // Wall on Top Edge (TL -> TR)
-                // Face outwards (North)
-                // Top: TL -> TR
-                // Bot: B_TL -> B_TR
-                // Quad: TL, TR, B_TR, B_TL (CCW)
-                indices.push(tl, tr, offset + tr);
-                indices.push(tr, offset + tr, offset + tl); // wait, tl->tr->b_tr is tri 1. tr->b_tr->b_tl is tri 2.
-                // Correct:
-                indices.push(tl, offset + tr, offset + tl); // 1-4-3
-                indices.push(tl, tr, offset + tr); // 1-2-4
+                indices.push(tl, offset + tr, offset + tl); 
+                indices.push(tl, tr, offset + tr); 
             }
 
             // 2. Bottom Neighbor (y+1)
             let botValid = false;
             if (y < segmentsY - 2) {
-                const n_tl = gridMap[(y + 1) * segmentsX + x]; // same as bl
-                const n_tr = gridMap[(y + 1) * segmentsX + x + 1]; // same as br
+                const n_tl = gridMap[(y + 1) * segmentsX + x]; 
+                const n_tr = gridMap[(y + 1) * segmentsX + x + 1]; 
                 const n_bl = gridMap[(y + 2) * segmentsX + x];
                 const n_br = gridMap[(y + 2) * segmentsX + x + 1];
                 if (n_tl !== -1 && n_tr !== -1 && n_bl !== -1 && n_br !== -1) botValid = true;
             }
             if (!botValid) {
-                // Wall on Bottom Edge (BR -> BL)
-                // Face outwards (South)
                 indices.push(br, bl, offset + bl);
                 indices.push(br, offset + bl, offset + br);
             }
@@ -375,15 +304,13 @@ export class TerrainGenerator {
             // 3. Left Neighbor (x-1)
             let leftValid = false;
             if (x > 0) {
-                const n_tr = gridMap[y * segmentsX + x - 1 + 1]; // same as tl
-                const n_br = gridMap[(y + 1) * segmentsX + x - 1 + 1]; // same as bl
+                const n_tr = gridMap[y * segmentsX + x - 1 + 1]; 
+                const n_br = gridMap[(y + 1) * segmentsX + x - 1 + 1]; 
                 const n_tl = gridMap[y * segmentsX + x - 1];
                 const n_bl = gridMap[(y + 1) * segmentsX + x - 1];
                 if (n_tl !== -1 && n_tr !== -1 && n_bl !== -1 && n_br !== -1) leftValid = true;
             }
             if (!leftValid) {
-                // Wall on Left Edge (BL -> TL)
-                // Face outwards (West)
                 indices.push(bl, tl, offset + tl);
                 indices.push(bl, offset + tl, offset + bl);
             }
@@ -391,15 +318,13 @@ export class TerrainGenerator {
             // 4. Right Neighbor (x+1)
             let rightValid = false;
             if (x < segmentsX - 2) {
-                const n_tl = gridMap[y * segmentsX + x + 1]; // same as tr
-                const n_bl = gridMap[(y + 1) * segmentsX + x + 1]; // same as br
+                const n_tl = gridMap[y * segmentsX + x + 1]; 
+                const n_bl = gridMap[(y + 1) * segmentsX + x + 1]; 
                 const n_tr = gridMap[y * segmentsX + x + 2];
                 const n_br = gridMap[(y + 1) * segmentsX + x + 2];
                 if (n_tl !== -1 && n_tr !== -1 && n_bl !== -1 && n_br !== -1) rightValid = true;
             }
             if (!rightValid) {
-                // Wall on Right Edge (TR -> BR)
-                // Face outwards (East)
                 indices.push(tr, br, offset + br);
                 indices.push(tr, offset + br, offset + tr);
             }
@@ -427,11 +352,24 @@ export class TerrainGenerator {
     }
   }
 
-  private loadTile(x: number, y: number, z: number, offsetX: number, offsetY: number, ctx: CanvasRenderingContext2D): Promise<void> {
+  private loadTile(x: number, y: number, z: number, offsetX: number, offsetY: number, ctx: CanvasRenderingContext2D, planet: string): Promise<void> {
     return new Promise((resolve) => {
       const img = new Image();
       img.crossOrigin = "Anonymous";
-      img.src = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
+      
+      if (planet === 'mars') {
+        // Mars MOLA (OpenPlanetary / NASA)
+        // Using a reliable public MOLA tileset (Carto/OpenPlanetary)
+        // Note: These are often visual. Ideally we need raw DEM. 
+        // For this demo, we use the "Shaded Relief" which is grayscale-ish and correlates to height.
+        img.src = `https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-mars-basemap-v0-1/all/${z}/${x}/${y}.png`;
+      } else if (planet === 'moon') {
+        // Moon LRO (OpenPlanetary / NASA)
+        img.src = `https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-moon-basemap-v0-1/all/${z}/${x}/${y}.png`;
+      } else {
+        // Earth (AWS Terrarium)
+        img.src = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
+      }
       
       img.onload = () => {
         ctx.drawImage(img, offsetX * 256, offsetY * 256);

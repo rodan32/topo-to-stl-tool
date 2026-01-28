@@ -1,6 +1,6 @@
 import { useState } from "react";
 import Layout from "@/components/Layout";
-import MapSelection from "@/components/MapSelection";
+import Map from "@/components/Map";
 import Controls from "@/components/Controls";
 import ModelPreview from "@/components/ModelPreview";
 import { Toaster } from "@/components/ui/sonner";
@@ -28,6 +28,7 @@ export default function Home() {
   const [modelWidth, setModelWidth] = useState([100]); // Default 100mm
   const [resolution, setResolution] = useState<"low" | "medium" | "high" | "ultra">("medium");
   const [shape, setShape] = useState<"rectangle" | "oval">("rectangle");
+  const [planet, setPlanet] = useState<"earth" | "mars" | "moon">("earth");
 
   const handleSelectionChange = (bounds: Bounds) => {
     setSelectionBounds(bounds);
@@ -49,14 +50,15 @@ export default function Home() {
     try {
       await new Promise(resolve => setTimeout(resolve, 100));
 
-      const generator = new TerrainGenerator({
-        bounds: selectionBounds,
-        exaggeration: exaggeration[0],
-        baseHeight: baseHeight[0],
-        modelWidth: modelWidth[0],
-        resolution: resolution,
-        shape: shape
-      });
+    const generator = new TerrainGenerator({
+      bounds: selectionBounds,
+      exaggeration: exaggeration[0],
+      baseHeight: baseHeight[0],
+      modelWidth: modelWidth[0],
+      resolution,
+      shape,
+      planet
+    });
 
       const blob = await generator.generate();
       toast.dismiss(toastId);
@@ -110,9 +112,10 @@ export default function Home() {
     <Layout>
       <div className="relative w-full h-full">
         {/* Map Layer */}
-        <MapSelection 
+        <Map 
           onSelectionChange={handleSelectionChange} 
-          className="z-0"
+          className="w-full h-full z-0"
+          planet={planet}
         />
         
         {/* Preview Layer Overlay */}
@@ -144,17 +147,19 @@ export default function Home() {
           selectionBounds={selectionBounds}
           hasPreview={!!previewBlob && showPreview}
           
-          exaggeration={exaggeration}
-          setExaggeration={setExaggeration}
-          baseHeight={baseHeight}
-          setBaseHeight={setBaseHeight}
-          modelWidth={modelWidth}
-          setModelWidth={setModelWidth}
-          resolution={resolution}
-          setResolution={setResolution}
-          shape={shape}
-          setShape={setShape}
-        />
+        exaggeration={exaggeration}
+        setExaggeration={setExaggeration}
+        baseHeight={baseHeight}
+        setBaseHeight={setBaseHeight}
+        modelWidth={modelWidth}
+        setModelWidth={setModelWidth}
+        resolution={resolution}
+        setResolution={setResolution}
+        shape={shape}
+        setShape={setShape}
+        planet={planet}
+        setPlanet={setPlanet}
+      />
       </div>
     </Layout>
   );

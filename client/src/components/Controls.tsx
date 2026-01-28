@@ -1,10 +1,10 @@
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { Download, Map as MapIcon, Settings, Box, RefreshCw, Eye } from "lucide-react";
+import { Download, Map as MapIcon, Settings, Box, RefreshCw, Eye, Circle } from "lucide-react";
+import PlanetSelector, { Planet } from "./PlanetSelector";
 
 interface ControlsProps {
   onExport: () => void;
@@ -24,6 +24,8 @@ interface ControlsProps {
   setResolution: (val: "low" | "medium" | "high" | "ultra") => void;
   shape: "rectangle" | "oval";
   setShape: (val: "rectangle" | "oval") => void;
+  planet: Planet;
+  setPlanet: (val: Planet) => void;
 }
 
 export default function Controls({ 
@@ -41,18 +43,21 @@ export default function Controls({
   resolution,
   setResolution,
   shape,
-  setShape
+  setShape,
+  planet,
+  setPlanet
 }: ControlsProps) {
 
   return (
     <div className="absolute top-20 right-6 w-80 flex flex-col gap-4 z-40 pointer-events-auto max-h-[calc(100vh-8rem)] overflow-y-auto pr-1 pb-4">
       {/* Coordinates Panel */}
       <Card className="glass-panel rounded-none border-l-4 border-l-primary">
-        <CardHeader className="py-3 px-4">
+        <CardHeader className="py-3 px-4 flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-sm font-mono uppercase tracking-widest flex items-center gap-2">
             <MapIcon className="w-4 h-4 text-primary" />
             Selection Data
           </CardTitle>
+          <PlanetSelector value={planet} onChange={setPlanet} />
         </CardHeader>
         <CardContent className="py-3 px-4 text-xs font-mono space-y-2">
           {selectionBounds ? (
@@ -168,10 +173,8 @@ export default function Controls({
                 size="sm"
                 className="text-xs font-mono rounded-none h-8"
                 onClick={() => setShape("oval")}
-                disabled={true} 
-                title="Coming soon"
               >
-                <RefreshCw className="w-3 h-3 mr-2" />
+                <Circle className="w-3 h-3 mr-2" />
                 OVAL
               </Button>
             </div>
@@ -180,20 +183,21 @@ export default function Controls({
           {/* Resolution */}
           <div className="space-y-3">
             <Label className="text-xs font-mono uppercase">Detail Level</Label>
-            <Select 
-              value={resolution} 
-              onValueChange={(val: "low" | "medium" | "high" | "ultra") => setResolution(val)}
-            >
-              <SelectTrigger className="h-8 text-xs font-mono rounded-none">
-                <SelectValue placeholder="Select resolution" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="low">LOW (Fast)</SelectItem>
-                <SelectItem value="medium">MEDIUM (Balanced)</SelectItem>
-                <SelectItem value="high">HIGH (Detailed)</SelectItem>
-                <SelectItem value="ultra">ULTRA (Slow)</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="flex justify-between gap-1">
+             {(["low", "medium", "high", "ultra"] as const).map((res) => (
+               <button
+                 key={res}
+                 onClick={() => setResolution(res)}
+                 className={`text-[10px] font-mono uppercase tracking-wider transition-colors px-1 ${
+                   resolution === res 
+                     ? "text-primary font-bold underline decoration-2 underline-offset-4" 
+                     : "text-muted-foreground hover:text-foreground"
+                 }`}
+               >
+                 {res}
+               </button>
+             ))}
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -220,19 +224,19 @@ export default function Controls({
         <Button 
           size="lg" 
           className="w-full rounded-none font-mono uppercase tracking-wider text-xs h-12 shadow-lg shadow-primary/20"
-          disabled={!selectionBounds || isProcessing || !hasPreview}
+          disabled={!selectionBounds || isProcessing}
           onClick={onExport}
         >
-          <Download className="w-4 h-4 mr-2" />
-          Download
+          {isProcessing ? (
+            <RefreshCw className="w-4 h-4 animate-spin" />
+          ) : (
+            <>
+              <Download className="w-4 h-4 mr-2" />
+              Download
+            </>
+          )}
         </Button>
       </div>
-      
-      {!hasPreview && selectionBounds && (
-        <div className="text-xs text-center text-muted-foreground font-mono">
-          Preview model to enable download
-        </div>
-      )}
     </div>
   );
 }
