@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { STLExporter } from "./STLExporter";
+import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 
 interface TerrainOptions {
   bounds: {
@@ -49,6 +49,7 @@ export class TerrainGenerator {
 
   // Generate the STL file
   async generate(): Promise<Blob> {
+    console.log("Starting Terrain Generation", this.options);
     const { bounds, exaggeration, baseHeight, modelWidth, shape } = this.options;
     const zoom = this.getZoomLevel();
 
@@ -58,6 +59,8 @@ export class TerrainGenerator {
     const yMin = lat2tile(bounds.north, zoom);
     const yMax = lat2tile(bounds.south, zoom);
 
+    console.log(`Tiles: X[${xMin}-${xMax}], Y[${yMin}-${yMax}], Zoom: ${zoom}`);
+
     // Canvas to draw tiles onto
     const canvas = document.createElement("canvas");
     const tileSize = 256;
@@ -65,9 +68,11 @@ export class TerrainGenerator {
     const height = (yMax - yMin + 1) * tileSize;
     canvas.width = width;
     canvas.height = height;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     
     if (!ctx) throw new Error("Could not create canvas context");
+
+    console.log(`Canvas Size: ${width}x${height}`);
 
     // Fetch and draw tiles
     const tilePromises = [];
@@ -78,9 +83,16 @@ export class TerrainGenerator {
     }
     
     await Promise.all(tilePromises);
+    console.log("All tiles loaded/processed");
 
     // Get image data
-    const imageData = ctx.getImageData(0, 0, width, height);
+    let imageData;
+    try {
+      imageData = ctx.getImageData(0, 0, width, height);
+    } catch (e) {
+      console.error("Error getting image data (likely CORS):", e);
+      throw new Error("Security Error: Unable to read map data. This is likely a CORS issue with the tile server.");
+    }
     const data = imageData.data;
 
     // Create geometry
@@ -89,8 +101,12 @@ export class TerrainGenerator {
     const lonSpan = bounds.east - bounds.west;
     const aspectRatio = lonSpan / latSpan;
 
+    console.log(`Aspect Ratio: ${aspectRatio}`);
+
     const segmentsX = Math.min(width, 256); // Limit vertices for browser performance
     const segmentsY = Math.round(segmentsX / aspectRatio);
+
+    console.log(`Mesh Segments: ${segmentsX}x${segmentsY}`);
 
     // Use user-defined modelWidth (mm)
     // Height (mm) = Width / AspectRatio
@@ -101,6 +117,7 @@ export class TerrainGenerator {
 
     // Apply elevation to vertices
     let minElev = Infinity;
+    let maxElev = -Infinity;
     
     // First pass: find minimum elevation
     for (let i = 0; i < vertices.length; i += 3) {
@@ -117,7 +134,10 @@ export class TerrainGenerator {
       
       const elev = decodeElevation(r, g, b);
       if (elev < minElev) minElev = elev;
+      if (elev > maxElev) maxElev = elev;
     }
+
+    console.log(`Elevation Range: ${minElev}m to ${maxElev}m`);
 
     // Second pass: set z-height relative to minimum + base
     for (let i = 0; i < vertices.length; i += 3) {
@@ -269,11 +289,24 @@ export class TerrainGenerator {
     
     const mesh = new THREE.Mesh(solidGeo, new THREE.MeshStandardMaterial());
     
+    console.log("Mesh created. Vertices:", solidVertices.length / 3, "Triangles:", indices.length / 3);
+
     // Export
     const exporter = new STLExporter();
-    const stlString = exporter.parse(mesh, { binary: true });
+    // The official exporter returns DataView for binary
+    const result = exporter.parse(mesh, { binary: true });
     
-    return new Blob([stlString], { type: 'application/octet-stream' });
+    console.log("STL Export Result type:", typeof result);
+    if (result instanceof DataView) {
+        console.log("STL Size:", result.byteLength);
+        return new Blob([result], { type: 'application/octet-stream' });
+    } else if (typeof result === 'string') {
+        console.log("STL Size (String):", result.length);
+        return new Blob([result], { type: 'text/plain' });
+    } else {
+        console.error("Unexpected export result:", result);
+        throw new Error("Failed to export STL");
+    }
   }
 
   private loadTile(x: number, y: number, z: number, offsetX: number, offsetY: number, ctx: CanvasRenderingContext2D): Promise<void> {
