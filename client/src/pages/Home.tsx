@@ -1,13 +1,12 @@
-import { useState } from "react";
-import Layout from "@/components/Layout";
+import { useState, useRef, useEffect } from "react";
 import Map from "@/components/Map";
 import Controls from "@/components/Controls";
-import ModelPreview from "@/components/ModelPreview";
-import { Toaster } from "@/components/ui/sonner";
-import { toast } from "sonner";
 import { TerrainGenerator } from "@/lib/TerrainGenerator";
+import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
+import * as THREE from "three";
+import { Planet } from "@/components/PlanetSelector";
+import { toast } from "sonner";
 import { X } from "lucide-react";
-import { Button } from "@/components/ui/button";
 
 interface Bounds {
   north: number;
@@ -19,134 +18,181 @@ interface Bounds {
 export default function Home() {
   const [selectionBounds, setSelectionBounds] = useState<Bounds | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
-  const [showPreview, setShowPreview] = useState(false);
   
-  // Controls state
+  // Settings State
   const [exaggeration, setExaggeration] = useState([1.25]);
-  const [baseHeight, setBaseHeight] = useState([5]);
-  const [modelWidth, setModelWidth] = useState([100]); // Default 100mm
+  const [baseHeight, setBaseHeight] = useState([2]);
+  const [modelWidth, setModelWidth] = useState([100]);
   const [resolution, setResolution] = useState<"low" | "medium" | "high" | "ultra">("medium");
   const [shape, setShape] = useState<"rectangle" | "oval">("rectangle");
-  const [planet, setPlanet] = useState<"earth" | "mars" | "moon">("earth");
+  const [planet, setPlanet] = useState<Planet>("earth");
+  const [lithophane, setLithophane] = useState(false);
+  const [invert, setInvert] = useState(false);
 
-  const handleSelectionChange = (bounds: Bounds) => {
-    setSelectionBounds(bounds);
-    // Invalidate preview when selection changes
-    if (showPreview) {
-      setShowPreview(false);
-      setPreviewBlob(null);
+  // Preview State
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const meshRef = useRef<THREE.Mesh | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
+  // Map Reference to control view
+  const mapRef = useRef<any>(null);
+
+  const handleLandmarkSelect = (lat: number, lng: number, zoom: number) => {
+    if (mapRef.current) {
+      mapRef.current.flyTo([lat, lng], zoom);
     }
   };
 
-  const generateModel = async () => {
-    if (!selectionBounds) return null;
-    
-    setIsProcessing(true);
-    const toastId = toast.loading("Generating 3D Model...", {
-      description: "Fetching elevation data and building mesh."
-    });
-    
-    try {
-      await new Promise(resolve => setTimeout(resolve, 100));
+  const generateModel = async (forPreview: boolean) => {
+    if (!selectionBounds) return;
 
-    const generator = new TerrainGenerator({
-      bounds: selectionBounds,
-      exaggeration: exaggeration[0],
-      baseHeight: baseHeight[0],
-      modelWidth: modelWidth[0],
-      resolution,
-      shape,
-      planet
-    });
+    setIsProcessing(true);
+    try {
+      const generator = new TerrainGenerator({
+        bounds: selectionBounds,
+        exaggeration: exaggeration[0],
+        baseHeight: baseHeight[0],
+        modelWidth: modelWidth[0],
+        resolution: resolution,
+        shape: shape,
+        planet: planet,
+        lithophane: lithophane,
+        invert: invert
+      });
 
       const blob = await generator.generate();
-      toast.dismiss(toastId);
-      return blob;
+
+      if (forPreview) {
+        const url = URL.createObjectURL(blob);
+        setPreviewUrl(url);
+        // Cleanup old URL if exists
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `topo_model_${planet}_${Date.now()}.stl`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast.success("Download started!");
+      }
     } catch (error) {
       console.error("Generation failed:", error);
-      toast.error("Generation Failed", {
-        id: toastId,
-        description: "An error occurred while generating the model.",
-      });
-      return null;
+      toast.error("Failed to generate model. Try a smaller area or lower resolution.");
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handlePreview = async () => {
-    const blob = await generateModel();
-    if (blob) {
-      setPreviewBlob(blob);
-      setShowPreview(true);
-    }
-  };
+  // Initialize Three.js Scene
+  useEffect(() => {
+    if (!previewUrl || !previewContainerRef.current) return;
 
-  const handleExport = async () => {
-    // If we already have a preview, download it directly
-    let blob = previewBlob;
-    
-    // Otherwise generate it
-    if (!blob) {
-      blob = await generateModel();
+    // Cleanup previous scene
+    if (rendererRef.current) {
+      rendererRef.current.dispose();
+      if (previewContainerRef.current.contains(rendererRef.current.domElement)) {
+        previewContainerRef.current.removeChild(rendererRef.current.domElement);
+      }
     }
+
+    const width = previewContainerRef.current.clientWidth;
+    const height = previewContainerRef.current.clientHeight;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a1a);
     
-    if (blob) {
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `topo_model_${Date.now()}.stl`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
+    // Add grid helper
+    const gridHelper = new THREE.GridHelper(200, 20, 0x444444, 0x222222);
+    scene.add(gridHelper);
+
+    // Lights
+    const ambientLight = new THREE.AmbientLight(0x404040, 2); // Soft white light
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+    dirLight.position.set(50, 100, 50);
+    scene.add(dirLight);
+
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+    camera.position.set(0, 100, 150);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(width, height);
+    previewContainerRef.current.appendChild(renderer.domElement);
+
+    // Load STL
+    const loader = new STLLoader();
+    loader.load(previewUrl, (geometry) => {
+      geometry.computeVertexNormals();
       
-      toast.success("Download Started", {
-        description: "Your STL file is ready for printing.",
+      // Center geometry
+      geometry.center();
+      
+      // Material
+      const material = new THREE.MeshStandardMaterial({ 
+        color: 0x00aaff, 
+        metalness: 0.2, 
+        roughness: 0.6,
+        flatShading: false
       });
-    }
-  };
+      
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.rotation.x = -Math.PI / 2; // Rotate to sit flat on grid
+      
+      scene.add(mesh);
+      meshRef.current = mesh;
+
+      // Fit camera to object
+      const box = new THREE.Box3().setFromObject(mesh);
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      camera.position.set(maxDim, maxDim * 1.5, maxDim * 1.5);
+      camera.lookAt(0, 0, 0);
+    });
+
+    sceneRef.current = scene;
+    cameraRef.current = camera;
+    rendererRef.current = renderer;
+
+    // Animation Loop
+    const animate = () => {
+      animationFrameRef.current = requestAnimationFrame(animate);
+      
+      if (meshRef.current) {
+        meshRef.current.rotation.z += 0.005; // Rotate slowly
+      }
+      
+      renderer.render(scene, camera);
+    };
+    animate();
+
+    return () => {
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      if (rendererRef.current) rendererRef.current.dispose();
+    };
+  }, [previewUrl]);
 
   return (
-    <Layout>
-      <div className="relative w-full h-full">
-        {/* Map Layer */}
-        <Map 
-          onSelectionChange={handleSelectionChange} 
-          className="w-full h-full z-0"
-          planet={planet}
-        />
-        
-        {/* Preview Layer Overlay */}
-        {showPreview && (
-          <div className="absolute inset-0 z-30 bg-background/95 animate-in fade-in duration-300">
-            <ModelPreview stlBlob={previewBlob} />
-            
-            <div className="absolute top-24 left-6 pointer-events-auto">
-               <Button 
-                variant="outline" 
-                size="icon"
-                onClick={() => setShowPreview(false)}
-                className="rounded-full bg-background border-primary text-primary hover:bg-primary hover:text-primary-foreground"
-              >
-                <X className="w-5 h-5" />
-              </Button>
-            </div>
-            
-            <div className="absolute top-24 left-20 bg-card/80 backdrop-blur px-4 py-2 border border-border text-xs font-mono">
-              PREVIEW MODE: {modelWidth[0]}mm WIDTH
-            </div>
-          </div>
-        )}
-        
-        <Controls 
-          onExport={handleExport}
-          onPreview={handlePreview}
-          isProcessing={isProcessing} 
-          selectionBounds={selectionBounds}
-          hasPreview={!!previewBlob && showPreview}
-          
+    <div className="w-full h-screen relative overflow-hidden bg-background">
+      <Map 
+        onBoundsChange={setSelectionBounds} 
+        planet={planet} 
+        onMapReady={(map) => { mapRef.current = map; }}
+      />
+      
+      <Controls
+        onExport={() => generateModel(false)}
+        onPreview={() => generateModel(true)}
+        isProcessing={isProcessing}
+        selectionBounds={selectionBounds}
+        hasPreview={!!previewUrl}
         exaggeration={exaggeration}
         setExaggeration={setExaggeration}
         baseHeight={baseHeight}
@@ -159,8 +205,32 @@ export default function Home() {
         setShape={setShape}
         planet={planet}
         setPlanet={setPlanet}
+        lithophane={lithophane}
+        setLithophane={setLithophane}
+        invert={invert}
+        setInvert={setInvert}
+        onLandmarkSelect={handleLandmarkSelect}
       />
-      </div>
-    </Layout>
+
+      {/* Preview Overlay */}
+      {previewUrl && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="relative w-[80vw] h-[80vh] bg-background border border-border shadow-2xl rounded-lg overflow-hidden">
+            <button 
+              onClick={() => setPreviewUrl(null)}
+              className="absolute top-4 right-4 z-10 p-2 bg-destructive text-destructive-foreground rounded-full hover:bg-destructive/90 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <div ref={previewContainerRef} className="w-full h-full" />
+            <div className="absolute bottom-4 left-4 right-4 flex justify-center pointer-events-none">
+              <span className="bg-background/80 backdrop-blur px-3 py-1 rounded text-xs font-mono border border-border">
+                Click and drag to rotate (Coming Soon) • Scroll to Zoom
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

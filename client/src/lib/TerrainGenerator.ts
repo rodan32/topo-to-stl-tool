@@ -10,10 +10,12 @@ interface TerrainOptions {
   };
   exaggeration: number;
   baseHeight: number;
-  modelWidth: number; // New option in mm
+  modelWidth: number; // in mm
   resolution: "low" | "medium" | "high" | "ultra";
   shape: "rectangle" | "oval";
   planet: "earth" | "mars" | "moon";
+  lithophane: boolean; // New option
+  invert: boolean;     // New option
 }
 
 // AWS Terrarium encoding: (r * 256 + g + b / 256) - 32768
@@ -21,16 +23,9 @@ const decodeElevationEarth = (r: number, g: number, b: number): number => {
   return (r * 256 + g + b / 256) - 32768;
 };
 
-// Simple grayscale decoding for Moon/Mars (assuming brightness = height)
-// We need to calibrate this based on the source.
-// MOLA (Mars) and LOLA (Moon) usually map grayscale to a range.
-// For now, we'll assume a normalized 0-255 range maps to a generic 0-10000m relative height for visual shape,
-// as exact absolute elevation requires specific metadata per tile which we don't have.
-// However, to make it printable, relative shape is what matters.
+// Simple grayscale decoding for Moon/Mars
 const decodeElevationPlanetary = (r: number, g: number, b: number): number => {
-  // Use average of RGB for grayscale value
   const val = (r + g + b) / 3;
-  // Map 0-255 to approx 0-20000m range (just a guess to get reasonable mountains)
   return val * 100; 
 };
 
@@ -50,7 +45,6 @@ export class TerrainGenerator {
     this.options = options;
   }
 
-  // Get zoom level based on resolution setting
   private getZoomLevel(): number {
     switch (this.options.resolution) {
       case "low": return 11;
@@ -61,21 +55,16 @@ export class TerrainGenerator {
     }
   }
 
-  // Generate the STL file
   async generate(): Promise<Blob> {
     console.log("Starting Terrain Generation", this.options);
-    const { bounds, exaggeration, baseHeight, modelWidth, shape, planet } = this.options;
+    const { bounds, exaggeration, baseHeight, modelWidth, shape, planet, lithophane, invert } = this.options;
     const zoom = this.getZoomLevel();
 
-    // Calculate tile range
     const xMin = long2tile(bounds.west, zoom);
     const xMax = long2tile(bounds.east, zoom);
     const yMin = lat2tile(bounds.north, zoom);
     const yMax = lat2tile(bounds.south, zoom);
 
-    console.log(`Tiles: X[${xMin}-${xMax}], Y[${yMin}-${yMax}], Zoom: ${zoom}`);
-
-    // Canvas to draw tiles onto
     const canvas = document.createElement("canvas");
     const tileSize = 256;
     const width = (xMax - xMin + 1) * tileSize;
@@ -86,9 +75,6 @@ export class TerrainGenerator {
     
     if (!ctx) throw new Error("Could not create canvas context");
 
-    console.log(`Canvas Size: ${width}x${height}`);
-
-    // Fetch and draw tiles
     const tilePromises = [];
     for (let x = xMin; x <= xMax; x++) {
       for (let y = yMin; y <= yMax; y++) {
@@ -97,41 +83,29 @@ export class TerrainGenerator {
     }
     
     await Promise.all(tilePromises);
-    console.log("All tiles loaded/processed");
 
-    // Get image data
     let imageData;
     try {
       imageData = ctx.getImageData(0, 0, width, height);
     } catch (e) {
       console.error("Error getting image data (likely CORS):", e);
-      throw new Error("Security Error: Unable to read map data. This is likely a CORS issue with the tile server.");
+      throw new Error("Security Error: Unable to read map data.");
     }
     const data = imageData.data;
 
-    // Create geometry
-    // Calculate aspect ratio of the selected area
     const latSpan = bounds.north - bounds.south;
     const lonSpan = bounds.east - bounds.west;
     const aspectRatio = lonSpan / latSpan;
 
-    console.log(`Aspect Ratio: ${aspectRatio}`);
-
-    const segmentsX = Math.min(width, 256); // Limit vertices for browser performance
+    const segmentsX = Math.min(width, 256);
     const segmentsY = Math.round(segmentsX / aspectRatio);
 
-    console.log(`Mesh Segments: ${segmentsX}x${segmentsY}`);
-
-    // Use user-defined modelWidth (mm)
-    // Height (mm) = Width / AspectRatio
     const modelHeight = modelWidth / aspectRatio;
 
-    // We will build a custom geometry manually
     const geometry = new THREE.BufferGeometry();
     const vertices: number[] = [];
     const indices: number[] = [];
 
-    // Helper to get elevation at grid coords (0..segmentsX-1, 0..segmentsY-1)
     const getElevation = (col: number, row: number) => {
       const imgX = Math.floor((col / (segmentsX - 1)) * (width - 1));
       const imgY = Math.floor((row / (segmentsY - 1)) * (height - 1));
@@ -148,19 +122,17 @@ export class TerrainGenerator {
       }
     };
 
-    // 1. Calculate Min/Max Elevation for scaling
     let minElev = Infinity;
     let maxElev = -Infinity;
 
     for (let y = 0; y < segmentsY; y++) {
       for (let x = 0; x < segmentsX; x++) {
-        // If oval, check if point is inside ellipse
         if (shape === 'oval') {
            const cx = (segmentsX - 1) / 2;
            const cy = (segmentsY - 1) / 2;
            const dx = (x - cx) / cx;
            const dy = (y - cy) / cy;
-           if (dx*dx + dy*dy > 1.0) continue; // Skip outside points
+           if (dx*dx + dy*dy > 1.0) continue;
         }
         
         const elev = getElevation(x, y);
@@ -168,37 +140,35 @@ export class TerrainGenerator {
         if (elev > maxElev) maxElev = elev;
       }
     }
-    console.log(`Elevation Range: ${minElev}m to ${maxElev}m`);
 
-    // Scale factors
     const centerLat = (bounds.north + bounds.south) / 2;
     const metersPerDegreeLon = 111132.954 * Math.cos(centerLat * Math.PI / 180);
     const realWidthMeters = lonSpan * metersPerDegreeLon;
-    const scale = modelWidth / realWidthMeters; // mm per meter
+    let scale = modelWidth / realWidthMeters; 
 
-    // For planetary, since we don't have real meters, we normalize to a visually pleasing range
-    // If planet != earth, we ignore realWidthMeters and just map min-max to a reasonable Z-height relative to width
-    // e.g. Max height = 10% of width * exaggeration
-    let finalScale = scale;
     if (planet !== 'earth') {
        const elevRange = maxElev - minElev;
-       if (elevRange === 0) finalScale = 1;
+       if (elevRange === 0) scale = 1;
        else {
-           // Target a base relief of ~15mm for 100mm width at 1x exaggeration
            const targetRelief = modelWidth * 0.15; 
-           finalScale = targetRelief / elevRange;
+           scale = targetRelief / elevRange;
        }
     }
 
-    // 2. Generate Vertices & Indices
-    // We need a map from (x,y) to vertexIndex because oval shape skips points
+    // Lithophane Settings
+    // If lithophane, we map minElev->maxElev to minThickness->maxThickness
+    // Typically minThickness=0.8mm, maxThickness=3.0mm
+    const minThickness = 0.8;
+    const maxThickness = 4.0;
+    const thicknessRange = maxThickness - minThickness;
+    const elevationRange = maxElev - minElev || 1;
+
     const gridMap = new Int32Array(segmentsX * segmentsY).fill(-1);
 
-    // Generate Top Surface Vertices
+    // Generate Top Surface
     for (let y = 0; y < segmentsY; y++) {
       for (let x = 0; x < segmentsX; x++) {
         
-        // Oval Check
         if (shape === 'oval') {
            const cx = (segmentsX - 1) / 2;
            const cy = (segmentsY - 1) / 2;
@@ -207,10 +177,24 @@ export class TerrainGenerator {
            if (dx*dx + dy*dy > 1.0) continue; 
         }
 
-        const elev = getElevation(x, y);
-        const z = (elev - minElev) * exaggeration * finalScale + baseHeight;
+        let elev = getElevation(x, y);
+        let z = 0;
 
-        // Position centered at 0,0
+        if (lithophane) {
+            // Normalize elevation 0..1
+            let norm = (elev - minElev) / elevationRange;
+            if (invert) norm = 1.0 - norm; // Invert: Low points = Thick, High points = Thin
+            
+            // Map to thickness
+            // Z = Thickness. Bottom is at Z=0. Top is at Z=Thickness.
+            z = minThickness + (norm * thicknessRange);
+        } else {
+            // Standard Terrain
+            // Apply Invert if requested (e.g. for molds)
+            if (invert) elev = -elev;
+            z = (elev - minElev) * exaggeration * scale + baseHeight;
+        }
+
         const px = (x / (segmentsX - 1)) * modelWidth - (modelWidth / 2);
         const py = -((y / (segmentsY - 1)) * modelHeight - (modelHeight / 2));
 
@@ -221,12 +205,12 @@ export class TerrainGenerator {
 
     const numTopVertices = vertices.length / 3;
 
-    // Generate Bottom Surface Vertices (Same X,Y, but Z=0)
+    // Generate Bottom Surface (Flat at Z=0)
     for (let i = 0; i < numTopVertices; i++) {
         vertices.push(vertices[i*3], vertices[i*3+1], 0);
     }
 
-    // 3. Generate Triangles
+    // Generate Triangles
     const addQuad = (v1: number, v2: number, v3: number, v4: number) => {
         indices.push(v1, v4, v2);
         indices.push(v2, v4, v3);
@@ -235,10 +219,10 @@ export class TerrainGenerator {
     // Top Surface
     for (let y = 0; y < segmentsY - 1; y++) {
       for (let x = 0; x < segmentsX - 1; x++) {
-        const idx1 = gridMap[y * segmentsX + x];           // TL
-        const idx2 = gridMap[y * segmentsX + x + 1];       // TR
-        const idx3 = gridMap[(y + 1) * segmentsX + x + 1]; // BR
-        const idx4 = gridMap[(y + 1) * segmentsX + x];     // BL
+        const idx1 = gridMap[y * segmentsX + x];           
+        const idx2 = gridMap[y * segmentsX + x + 1];       
+        const idx3 = gridMap[(y + 1) * segmentsX + x + 1]; 
+        const idx4 = gridMap[(y + 1) * segmentsX + x];     
 
         if (idx1 !== -1 && idx2 !== -1 && idx3 !== -1 && idx4 !== -1) {
              addQuad(idx1, idx2, idx3, idx4);
@@ -250,10 +234,10 @@ export class TerrainGenerator {
     const offset = numTopVertices;
     for (let y = 0; y < segmentsY - 1; y++) {
       for (let x = 0; x < segmentsX - 1; x++) {
-        const idx1 = gridMap[y * segmentsX + x];           // TL
-        const idx2 = gridMap[y * segmentsX + x + 1];       // TR
-        const idx3 = gridMap[(y + 1) * segmentsX + x + 1]; // BR
-        const idx4 = gridMap[(y + 1) * segmentsX + x];     // BL
+        const idx1 = gridMap[y * segmentsX + x];           
+        const idx2 = gridMap[y * segmentsX + x + 1];       
+        const idx3 = gridMap[(y + 1) * segmentsX + x + 1]; 
+        const idx4 = gridMap[(y + 1) * segmentsX + x];     
 
         if (idx1 !== -1 && idx2 !== -1 && idx3 !== -1 && idx4 !== -1) {
              indices.push(offset + idx1, offset + idx2, offset + idx4);
@@ -262,7 +246,7 @@ export class TerrainGenerator {
       }
     }
 
-    // Wall Generation (Robust Method)
+    // Wall Generation
     for (let y = 0; y < segmentsY - 1; y++) {
       for (let x = 0; x < segmentsX - 1; x++) {
         const tl = gridMap[y * segmentsX + x];
@@ -273,7 +257,7 @@ export class TerrainGenerator {
         const isCellValid = (tl !== -1 && tr !== -1 && br !== -1 && bl !== -1);
 
         if (isCellValid) {
-            // 1. Top Neighbor (y-1)
+            // Top Neighbor
             let topValid = false;
             if (y > 0) {
                 const n_bl = gridMap[(y - 1 + 1) * segmentsX + x]; 
@@ -287,7 +271,7 @@ export class TerrainGenerator {
                 indices.push(tl, tr, offset + tr); 
             }
 
-            // 2. Bottom Neighbor (y+1)
+            // Bottom Neighbor
             let botValid = false;
             if (y < segmentsY - 2) {
                 const n_tl = gridMap[(y + 1) * segmentsX + x]; 
@@ -301,7 +285,7 @@ export class TerrainGenerator {
                 indices.push(br, offset + bl, offset + br);
             }
 
-            // 3. Left Neighbor (x-1)
+            // Left Neighbor
             let leftValid = false;
             if (x > 0) {
                 const n_tr = gridMap[y * segmentsX + x - 1 + 1]; 
@@ -315,7 +299,7 @@ export class TerrainGenerator {
                 indices.push(bl, offset + tl, offset + bl);
             }
 
-            // 4. Right Neighbor (x+1)
+            // Right Neighbor
             let rightValid = false;
             if (x < segmentsX - 2) {
                 const n_tl = gridMap[y * segmentsX + x + 1]; 
@@ -338,14 +322,10 @@ export class TerrainGenerator {
     
     const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial());
     
-    console.log("Mesh created. Vertices:", vertices.length / 3, "Triangles:", indices.length / 3);
-
-    // Export
     const exporter = new STLExporter();
     const result = exporter.parse(mesh, { binary: true });
     
     if (result instanceof DataView) {
-        console.log("STL Size:", result.byteLength);
         return new Blob([result], { type: 'application/octet-stream' });
     } else {
         throw new Error("Failed to export STL");
@@ -358,16 +338,10 @@ export class TerrainGenerator {
       img.crossOrigin = "Anonymous";
       
       if (planet === 'mars') {
-        // Mars MOLA (OpenPlanetary / NASA)
-        // Using a reliable public MOLA tileset (Carto/OpenPlanetary)
-        // Note: These are often visual. Ideally we need raw DEM. 
-        // For this demo, we use the "Shaded Relief" which is grayscale-ish and correlates to height.
         img.src = `https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-mars-basemap-v0-1/all/${z}/${x}/${y}.png`;
       } else if (planet === 'moon') {
-        // Moon LRO (OpenPlanetary / NASA)
         img.src = `https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-moon-basemap-v0-1/all/${z}/${x}/${y}.png`;
       } else {
-        // Earth (AWS Terrarium)
         img.src = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
       }
       

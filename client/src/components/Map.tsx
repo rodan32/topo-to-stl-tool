@@ -26,12 +26,13 @@ const TILE_LAYERS = {
 };
 
 interface MapProps {
-  onSelectionChange: (bounds: { north: number; south: number; east: number; west: number }) => void;
+  onBoundsChange: (bounds: { north: number; south: number; east: number; west: number } | null) => void;
   className?: string;
   planet: "earth" | "mars" | "moon";
+  onMapReady?: (map: L.Map) => void;
 }
 
-export default function Map({ onSelectionChange, className, planet }: MapProps) {
+export default function Map({ onBoundsChange, className, planet, onMapReady }: MapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
@@ -52,6 +53,10 @@ export default function Map({ onSelectionChange, className, planet }: MapProps) 
 
     const map = L.map(mapContainerRef.current).setView([40.39, -111.65], 11); // Mt. Timpanogos
     mapInstanceRef.current = map;
+    
+    if (onMapReady) {
+      onMapReady(map);
+    }
 
     // Feature Group for drawn items
     const drawnItems = new L.FeatureGroup();
@@ -93,6 +98,10 @@ export default function Map({ onSelectionChange, className, planet }: MapProps) 
         updateSelection(layer);
       });
     });
+    
+    map.on(L.Draw.Event.DELETED, () => {
+      onBoundsChange(null);
+    });
 
     setIsMapReady(true);
 
@@ -127,7 +136,7 @@ export default function Map({ onSelectionChange, className, planet }: MapProps) 
 
   const updateSelection = (layer: L.Rectangle) => {
     const bounds = layer.getBounds();
-    onSelectionChange({
+    onBoundsChange({
       north: bounds.getNorth(),
       south: bounds.getSouth(),
       east: bounds.getEast(),
@@ -135,5 +144,5 @@ export default function Map({ onSelectionChange, className, planet }: MapProps) 
     });
   };
 
-  return <div ref={mapContainerRef} className={className} />;
+  return <div ref={mapContainerRef} className={className || "w-full h-full"} />;
 }
