@@ -144,5 +144,6 @@ export default function Map({ onBoundsChange, className, planet, onMapReady }: M
     });
   };
 
-  return <div ref={mapContainerRef} className={className || "w-full h-full"} />;
+  // Add z-index: 0 to ensure map stays behind controls
+  return <div ref={mapContainerRef} className={className || "w-full h-full z-0"} />;
 }

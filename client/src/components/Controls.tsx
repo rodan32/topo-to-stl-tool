@@ -61,7 +61,8 @@ export default function Controls({
 }: ControlsProps) {
 
   return (
-    <div className="absolute top-4 right-4 w-80 flex flex-col gap-4 z-40 pointer-events-auto max-h-[calc(100vh-2rem)] overflow-y-auto pr-1 pb-4">
+    // Increased z-index to 1000 to ensure it stays above map layers
+    <div className="absolute top-4 right-4 w-80 flex flex-col gap-4 z-[1000] pointer-events-auto max-h-[calc(100vh-2rem)] overflow-y-auto pr-1 pb-4">
       {/* Coordinates Panel */}
       <Card className="glass-panel rounded-none border-l-4 border-l-primary">
         <CardHeader className="py-3 px-4 flex flex-row items-center justify-between space-y-0">
