@@ -51,12 +51,19 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
     startDrawing: () => {
       if (!mapInstanceRef.current) return;
       
+      // Clear existing selection first
+      if (drawnItemsRef.current) {
+        drawnItemsRef.current.clearLayers();
+        onBoundsChange(null);
+      }
+
       // Programmatically start the rectangle draw handler
       // Cast to any to bypass strict typing issues with leaflet-draw
       const drawHandler = new L.Draw.Rectangle(mapInstanceRef.current as any, {
         shapeOptions: {
-          color: '#ff4500',
-          weight: 2
+          color: 'var(--primary)', // Use CSS variable color if possible, or fallback
+          weight: 2,
+          fillOpacity: 0.2
         }
       });
       drawHandler.enable();
@@ -80,14 +87,20 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
       shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
     });
 
-    const map = L.map(mapContainerRef.current).setView([40.39, -111.65], 11); // Mt. Timpanogos
+    const map = L.map(mapContainerRef.current, {
+      zoomControl: false // Move zoom control if needed, or keep default
+    }).setView([40.39, -111.65], 11); // Mt. Timpanogos
+    
+    // Add Zoom control to top-left (default)
+    L.control.zoom({ position: 'topleft' }).addTo(map);
+
     mapInstanceRef.current = map;
     
     if (onMapReady) {
       onMapReady(map);
     }
 
-    // Feature Group for drawn items
+    // Feature Group for drawn items - CRITICAL: Must be added to map
     const drawnItems = new L.FeatureGroup();
     map.addLayer(drawnItems);
     drawnItemsRef.current = drawnItems;

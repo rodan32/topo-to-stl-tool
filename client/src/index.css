@@ -191,6 +191,24 @@
     @apply bg-card backdrop-blur-md border border-border shadow-lg;
   }
 
+  /* Leaflet Draw Overrides */
+  .leaflet-draw-tooltip {
+    @apply bg-card text-card-foreground border border-border rounded-none font-mono text-xs shadow-lg;
+    z-index: 1001; /* Ensure tooltip is visible */
+  }
+  
+  .leaflet-draw-guide-dash {
+    @apply border-primary;
+  }
+  
+  /* Make sure the drawn rectangle is visible */
+  path.leaflet-interactive {
+    stroke: var(--primary);
+    stroke-width: 2px;
+    fill: var(--primary);
+    fill-opacity: 0.2;
+  }
+
   @media (min-width: 640px) {
     .container {
       padding-left: 1.5rem;

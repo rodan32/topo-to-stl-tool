@@ -258,7 +258,11 @@ export default function Controls({
           variant="outline"
           className="w-full rounded-none font-mono uppercase tracking-wider text-xs h-12 border-primary text-primary hover:bg-primary hover:text-primary-foreground"
           disabled={!selectionBounds || isProcessing}
-          onClick={onPreview}
+          onClick={(e) => {
+            e.preventDefault(); // Prevent any default form submission behavior
+            console.log("Preview button clicked"); // Debug log
+            onPreview();
+          }}
         >
           {isProcessing ? (
             <RefreshCw className="w-4 h-4 animate-spin" />
