@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import Map from "@/components/Map";
+import Map, { MapRef } from "@/components/Map";
 import Controls from "@/components/Controls";
 import { TerrainGenerator } from "@/lib/TerrainGenerator";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
@@ -39,11 +39,17 @@ export default function Home() {
   const animationFrameRef = useRef<number | null>(null);
 
   // Map Reference to control view
-  const mapRef = useRef<any>(null);
+  const mapRef = useRef<MapRef>(null);
 
   const handleLandmarkSelect = (lat: number, lng: number, zoom: number) => {
     if (mapRef.current) {
-      mapRef.current.flyTo([lat, lng], zoom);
+      mapRef.current.flyTo(lat, lng, zoom);
+    }
+  };
+  
+  const handleStartDrawing = () => {
+    if (mapRef.current) {
+      mapRef.current.startDrawing();
     }
   };
 
@@ -182,9 +188,9 @@ export default function Home() {
   return (
     <div className="w-full h-screen relative overflow-hidden bg-background">
       <Map 
+        ref={mapRef}
         onBoundsChange={setSelectionBounds} 
         planet={planet} 
-        onMapReady={(map) => { mapRef.current = map; }}
       />
       
       <Controls
@@ -210,6 +216,7 @@ export default function Home() {
         invert={invert}
         setInvert={setInvert}
         onLandmarkSelect={handleLandmarkSelect}
+        onStartDrawing={handleStartDrawing}
       />
 
       {/* Preview Overlay */}

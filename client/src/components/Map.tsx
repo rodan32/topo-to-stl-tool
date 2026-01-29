@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-draw/dist/leaflet.draw.css";
@@ -7,9 +7,10 @@ import "leaflet-draw";
 // Define tile layers for each planet
 const TILE_LAYERS = {
   earth: {
-    url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    maxZoom: 18
+    // Switch to OpenTopoMap for better terrain visualization
+    url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+    attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)',
+    maxZoom: 17
   },
   mars: {
     // ESRI Mars MOLA Elevation
@@ -25,6 +26,11 @@ const TILE_LAYERS = {
   }
 };
 
+export interface MapRef {
+  startDrawing: () => void;
+  flyTo: (lat: number, lng: number, zoom: number) => void;
+}
+
 interface MapProps {
   onBoundsChange: (bounds: { north: number; south: number; east: number; west: number } | null) => void;
   className?: string;
@@ -32,12 +38,35 @@ interface MapProps {
   onMapReady?: (map: L.Map) => void;
 }
 
-export default function Map({ onBoundsChange, className, planet, onMapReady }: MapProps) {
+const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, onMapReady }, ref) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const tileLayerRef = useRef<L.TileLayer | null>(null);
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
+  const drawControlRef = useRef<L.Control.Draw | null>(null);
   const [isMapReady, setIsMapReady] = useState(false);
+
+  // Expose methods to parent via ref
+  useImperativeHandle(ref, () => ({
+    startDrawing: () => {
+      if (!mapInstanceRef.current) return;
+      
+      // Programmatically start the rectangle draw handler
+      // Cast to any to bypass strict typing issues with leaflet-draw
+      const drawHandler = new L.Draw.Rectangle(mapInstanceRef.current as any, {
+        shapeOptions: {
+          color: '#ff4500',
+          weight: 2
+        }
+      });
+      drawHandler.enable();
+    },
+    flyTo: (lat: number, lng: number, zoom: number) => {
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.flyTo([lat, lng], zoom);
+      }
+    }
+  }));
 
   // Initialize Map
   useEffect(() => {
@@ -84,6 +113,7 @@ export default function Map({ onBoundsChange, className, planet, onMapReady }: M
       }
     });
     map.addControl(drawControl);
+    drawControlRef.current = drawControl;
 
     // Handle Draw Events
     map.on(L.Draw.Event.CREATED, (e: any) => {
@@ -144,6 +174,7 @@ export default function Map({ onBoundsChange, className, planet, onMapReady }: M
     });
   };
 
-  // Add z-index: 0 to ensure map stays behind controls
   return <div ref={mapContainerRef} className={className || "w-full h-full z-0"} />;
-}
+});
+
+export default Map;

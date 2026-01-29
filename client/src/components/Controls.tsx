@@ -4,7 +4,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { Download, Map as MapIcon, Settings, Box, RefreshCw, Eye, Circle, Layers } from "lucide-react";
+import { Download, Map as MapIcon, Settings, Box, RefreshCw, Eye, Circle, Layers, PenTool } from "lucide-react";
 import PlanetSelector, { Planet } from "./PlanetSelector";
 import LandmarkSearch from "./LandmarkSearch";
 
@@ -33,6 +33,7 @@ interface ControlsProps {
   invert: boolean;
   setInvert: (val: boolean) => void;
   onLandmarkSelect: (lat: number, lng: number, zoom: number) => void;
+  onStartDrawing: () => void; // New prop for triggering draw
 }
 
 export default function Controls({ 
@@ -57,11 +58,11 @@ export default function Controls({
   setLithophane,
   invert,
   setInvert,
-  onLandmarkSelect
+  onLandmarkSelect,
+  onStartDrawing
 }: ControlsProps) {
 
   return (
-    // Increased z-index to 1000 to ensure it stays above map layers
     <div className="absolute top-4 right-4 w-80 flex flex-col gap-4 z-[1000] pointer-events-auto max-h-[calc(100vh-2rem)] overflow-y-auto pr-1 pb-4">
       {/* Coordinates Panel */}
       <Card className="glass-panel rounded-none border-l-4 border-l-primary">
@@ -98,8 +99,19 @@ export default function Controls({
               </div>
             </>
           ) : (
-            <div className="text-muted-foreground italic text-center py-2">
-              No area selected. Draw a rectangle on the map.
+            <div className="space-y-3">
+              <div className="text-muted-foreground italic text-center py-1">
+                No area selected.
+              </div>
+              <Button 
+                size="sm" 
+                variant="secondary" 
+                className="w-full font-mono text-xs uppercase tracking-wider"
+                onClick={onStartDrawing}
+              >
+                <PenTool className="w-3 h-3 mr-2" />
+                Draw Selection
+              </Button>
             </div>
           )}
         </CardContent>
