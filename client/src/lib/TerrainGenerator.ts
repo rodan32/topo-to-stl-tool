@@ -124,6 +124,11 @@ export class TerrainGenerator {
       const g = data[index + 1];
       const b = data[index + 2];
       
+      // Check for transparency (alpha channel) or specific "no data" colors
+      // Terrarium tiles often use alpha=0 for no data
+      const a = data[index + 3];
+      if (a === 0) return null; // Explicitly return null for no data
+
       if (planet === 'earth') {
         return decodeElevationEarth(r, g, b);
       } else {
@@ -133,6 +138,7 @@ export class TerrainGenerator {
 
     let minElev = Infinity;
     let maxElev = -Infinity;
+    let validPoints = 0;
 
     for (let y = 0; y < segmentsY; y++) {
       for (let x = 0; x < segmentsX; x++) {
@@ -145,15 +151,17 @@ export class TerrainGenerator {
         }
         
         const elev = getElevation(x, y);
-        if (elev < minElev) minElev = elev;
-        if (elev > maxElev) maxElev = elev;
+        if (elev !== null) {
+          if (elev < minElev) minElev = elev;
+          if (elev > maxElev) maxElev = elev;
+          validPoints++;
+        }
       }
     }
     
-    // Fallback if no valid elevation found (e.g. all masked out or data error)
-    if (minElev === Infinity || maxElev === -Infinity) {
-        minElev = 0;
-        maxElev = 100;
+    // Check if we have enough valid data points
+    if (validPoints === 0 || minElev === Infinity || maxElev === -Infinity) {
+        throw new Error("Topographic data is not available for this region. Please select a different area.");
     }
     
     console.log(`Elevation Range: ${minElev} to ${maxElev}`);
@@ -195,6 +203,9 @@ export class TerrainGenerator {
         }
 
         let elev = getElevation(x, y);
+        // Fallback for isolated missing pixels if surrounding area is valid
+        if (elev === null) elev = minElev; 
+
         let z = 0;
 
         if (lithophane) {

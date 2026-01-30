@@ -87,9 +87,11 @@ export default function Home() {
         URL.revokeObjectURL(url);
         toast.success("Download started!");
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Generation failed:", error);
-      toast.error("Failed to generate model. Try a smaller area or lower resolution.");
+      // Display specific error message from generator if available
+      const message = error.message || "Failed to generate model. Try a smaller area or lower resolution.";
+      toast.error(message);
     } finally {
       setIsProcessing(false);
     }
