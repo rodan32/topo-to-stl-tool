@@ -61,7 +61,7 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
       // Cast to any to bypass strict typing issues with leaflet-draw
       const drawHandler = new L.Draw.Rectangle(mapInstanceRef.current as any, {
         shapeOptions: {
-          color: 'var(--primary)', // Use CSS variable color if possible, or fallback
+          color: '#ff4500', // Industrial Orange
           weight: 2,
           fillOpacity: 0.2
         }
@@ -116,7 +116,8 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
         rectangle: {
           shapeOptions: {
             color: '#ff4500', // Industrial Orange
-            weight: 2
+            weight: 2,
+            fillOpacity: 0.2
           }
         }
       },

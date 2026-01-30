@@ -65,6 +65,8 @@ export class TerrainGenerator {
     const yMin = lat2tile(bounds.north, zoom);
     const yMax = lat2tile(bounds.south, zoom);
 
+    console.log(`Grid: X[${xMin}-${xMax}] Y[${yMin}-${yMax}] Zoom: ${zoom}`);
+
     const canvas = document.createElement("canvas");
     const tileSize = 256;
     const width = (xMax - xMin + 1) * tileSize;
@@ -83,6 +85,7 @@ export class TerrainGenerator {
     }
     
     await Promise.all(tilePromises);
+    console.log("All tiles loaded");
 
     let imageData;
     try {
@@ -92,6 +95,7 @@ export class TerrainGenerator {
       throw new Error("Security Error: Unable to read map data.");
     }
     const data = imageData.data;
+    console.log(`Image Data size: ${data.length}, W: ${width}, H: ${height}`);
 
     const latSpan = bounds.north - bounds.south;
     const lonSpan = bounds.east - bounds.west;
@@ -101,6 +105,8 @@ export class TerrainGenerator {
     const segmentsY = Math.round(segmentsX / aspectRatio);
 
     const modelHeight = modelWidth / aspectRatio;
+    
+    console.log(`Mesh Grid: ${segmentsX}x${segmentsY}, Model Size: ${modelWidth}x${modelHeight}`);
 
     const geometry = new THREE.BufferGeometry();
     const vertices: number[] = [];
@@ -111,6 +117,9 @@ export class TerrainGenerator {
       const imgY = Math.floor((row / (segmentsY - 1)) * (height - 1));
       
       const index = (imgY * width + imgX) * 4;
+      // Safety check for index out of bounds
+      if (index < 0 || index >= data.length) return 0;
+
       const r = data[index];
       const g = data[index + 1];
       const b = data[index + 2];
@@ -140,6 +149,14 @@ export class TerrainGenerator {
         if (elev > maxElev) maxElev = elev;
       }
     }
+    
+    // Fallback if no valid elevation found (e.g. all masked out or data error)
+    if (minElev === Infinity || maxElev === -Infinity) {
+        minElev = 0;
+        maxElev = 100;
+    }
+    
+    console.log(`Elevation Range: ${minElev} to ${maxElev}`);
 
     const centerLat = (bounds.north + bounds.south) / 2;
     const metersPerDegreeLon = 111132.954 * Math.cos(centerLat * Math.PI / 180);
@@ -204,6 +221,11 @@ export class TerrainGenerator {
     }
 
     const numTopVertices = vertices.length / 3;
+    console.log(`Generated ${numTopVertices} vertices for top surface`);
+
+    if (numTopVertices === 0) {
+        throw new Error("No vertices generated. Check selection bounds and shape.");
+    }
 
     // Generate Bottom Surface (Flat at Z=0)
     for (let i = 0; i < numTopVertices; i++) {
@@ -321,11 +343,13 @@ export class TerrainGenerator {
     geometry.computeVertexNormals();
     
     const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial());
+    console.log("Mesh created, starting export...");
     
     const exporter = new STLExporter();
     const result = exporter.parse(mesh, { binary: true });
     
     if (result instanceof DataView) {
+        console.log(`STL Export successful, size: ${result.byteLength}`);
         return new Blob([result], { type: 'application/octet-stream' });
     } else {
         throw new Error("Failed to export STL");
