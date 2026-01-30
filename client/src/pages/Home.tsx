@@ -72,10 +72,13 @@ export default function Home() {
 
       const blob = await generator.generate();
 
+      if (generator.fallbackTriggered) {
+          toast.warning("Area too large for selected resolution. Automatically adjusted zoom to ensure stability.");
+      }
+
       if (forPreview) {
         const url = URL.createObjectURL(blob);
         setPreviewUrl(url);
-        // Cleanup old URL if exists
       } else {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -89,7 +92,6 @@ export default function Home() {
       }
     } catch (error: any) {
       console.error("Generation failed:", error);
-      // Display specific error message from generator if available
       const message = error.message || "Failed to generate model. Try a smaller area or lower resolution.";
       toast.error(message);
     } finally {

@@ -14,8 +14,8 @@ interface TerrainOptions {
   resolution: "low" | "medium" | "high" | "ultra";
   shape: "rectangle" | "oval";
   planet: "earth" | "mars" | "moon";
-  lithophane: boolean; // New option
-  invert: boolean;     // New option
+  lithophane: boolean;
+  invert: boolean;
 }
 
 // AWS Terrarium encoding: (r * 256 + g + b / 256) - 32768
@@ -40,6 +40,7 @@ const lat2tile = (lat: number, zoom: number) => {
 
 export class TerrainGenerator {
   private options: TerrainOptions;
+  public fallbackTriggered: boolean = false;
   
   constructor(options: TerrainOptions) {
     this.options = options;
@@ -58,19 +59,41 @@ export class TerrainGenerator {
   async generate(): Promise<Blob> {
     console.log("Starting Terrain Generation", this.options);
     const { bounds, exaggeration, baseHeight, modelWidth, shape, planet, lithophane, invert } = this.options;
-    const zoom = this.getZoomLevel();
+    let zoom = this.getZoomLevel();
 
-    const xMin = long2tile(bounds.west, zoom);
-    const xMax = long2tile(bounds.east, zoom);
-    const yMin = lat2tile(bounds.north, zoom);
-    const yMax = lat2tile(bounds.south, zoom);
+    // Calculate dimensions
+    let xMin = long2tile(bounds.west, zoom);
+    let xMax = long2tile(bounds.east, zoom);
+    let yMin = lat2tile(bounds.north, zoom);
+    let yMax = lat2tile(bounds.south, zoom);
+
+    // Check if the requested area is too large for the current resolution
+    // Limit: Max 4096 x 4096 pixels (approx 16x16 tiles of 256px)
+    // This is a safe limit for most browser canvases and WebGL contexts
+    const MAX_PIXELS = 4096;
+    let width = (xMax - xMin + 1) * 256;
+    let height = (yMax - yMin + 1) * 256;
+
+    if (width > MAX_PIXELS || height > MAX_PIXELS) {
+        console.warn(`Area too large for Zoom ${zoom} (${width}x${height}). Downgrading resolution.`);
+        this.fallbackTriggered = true;
+        
+        // Step down zoom until it fits
+        while ((width > MAX_PIXELS || height > MAX_PIXELS) && zoom > 5) {
+            zoom--;
+            xMin = long2tile(bounds.west, zoom);
+            xMax = long2tile(bounds.east, zoom);
+            yMin = lat2tile(bounds.north, zoom);
+            yMax = lat2tile(bounds.south, zoom);
+            width = (xMax - xMin + 1) * 256;
+            height = (yMax - yMin + 1) * 256;
+        }
+        console.log(`New Zoom: ${zoom} (${width}x${height})`);
+    }
 
     console.log(`Grid: X[${xMin}-${xMax}] Y[${yMin}-${yMax}] Zoom: ${zoom}`);
 
     const canvas = document.createElement("canvas");
-    const tileSize = 256;
-    const width = (xMax - xMin + 1) * tileSize;
-    const height = (yMax - yMin + 1) * tileSize;
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
@@ -101,7 +124,16 @@ export class TerrainGenerator {
     const lonSpan = bounds.east - bounds.west;
     const aspectRatio = lonSpan / latSpan;
 
-    const segmentsX = Math.min(width, 256);
+    // Dynamic resolution based on "ultra" setting
+    // Low: 128, Med: 256, High: 512, Ultra: up to 2048 (or width if smaller)
+    let maxSegments = 256;
+    if (this.options.resolution === 'low') maxSegments = 128;
+    if (this.options.resolution === 'medium') maxSegments = 256;
+    if (this.options.resolution === 'high') maxSegments = 512;
+    if (this.options.resolution === 'ultra') maxSegments = 2048; // Significantly increased
+
+    // Ensure we don't sample more than available pixels
+    const segmentsX = Math.min(width, maxSegments);
     const segmentsY = Math.round(segmentsX / aspectRatio);
 
     const modelHeight = modelWidth / aspectRatio;
@@ -117,17 +149,14 @@ export class TerrainGenerator {
       const imgY = Math.floor((row / (segmentsY - 1)) * (height - 1));
       
       const index = (imgY * width + imgX) * 4;
-      // Safety check for index out of bounds
       if (index < 0 || index >= data.length) return 0;
 
       const r = data[index];
       const g = data[index + 1];
       const b = data[index + 2];
       
-      // Check for transparency (alpha channel) or specific "no data" colors
-      // Terrarium tiles often use alpha=0 for no data
       const a = data[index + 3];
-      if (a === 0) return null; // Explicitly return null for no data
+      if (a === 0) return null;
 
       if (planet === 'earth') {
         return decodeElevationEarth(r, g, b);
@@ -159,7 +188,6 @@ export class TerrainGenerator {
       }
     }
     
-    // Check if we have enough valid data points
     if (validPoints === 0 || minElev === Infinity || maxElev === -Infinity) {
         throw new Error("Topographic data is not available for this region. Please select a different area.");
     }
@@ -180,9 +208,6 @@ export class TerrainGenerator {
        }
     }
 
-    // Lithophane Settings
-    // If lithophane, we map minElev->maxElev to minThickness->maxThickness
-    // Typically minThickness=0.8mm, maxThickness=3.0mm
     const minThickness = 0.8;
     const maxThickness = 4.0;
     const thicknessRange = maxThickness - minThickness;
@@ -203,22 +228,15 @@ export class TerrainGenerator {
         }
 
         let elev = getElevation(x, y);
-        // Fallback for isolated missing pixels if surrounding area is valid
         if (elev === null) elev = minElev; 
 
         let z = 0;
 
         if (lithophane) {
-            // Normalize elevation 0..1
             let norm = (elev - minElev) / elevationRange;
-            if (invert) norm = 1.0 - norm; // Invert: Low points = Thick, High points = Thin
-            
-            // Map to thickness
-            // Z = Thickness. Bottom is at Z=0. Top is at Z=Thickness.
+            if (invert) norm = 1.0 - norm;
             z = minThickness + (norm * thicknessRange);
         } else {
-            // Standard Terrain
-            // Apply Invert if requested (e.g. for molds)
             if (invert) elev = -elev;
             z = (elev - minElev) * exaggeration * scale + baseHeight;
         }
