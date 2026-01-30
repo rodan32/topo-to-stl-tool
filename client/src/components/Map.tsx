@@ -58,12 +58,14 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
       }
 
       // Programmatically start the rectangle draw handler
-      // Cast to any to bypass strict typing issues with leaflet-draw
       const drawHandler = new L.Draw.Rectangle(mapInstanceRef.current as any, {
         shapeOptions: {
-          color: '#ff4500', // Industrial Orange
-          weight: 2,
-          fillOpacity: 0.2
+          color: '#ff4500',
+          weight: 4, // Thicker line
+          opacity: 1,
+          fillOpacity: 0.2,
+          fillColor: '#ff4500',
+          dashArray: '5, 5' // Dashed line for better visibility
         }
       });
       drawHandler.enable();
@@ -103,6 +105,8 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
     // Feature Group for drawn items - CRITICAL: Must be added to map
     const drawnItems = new L.FeatureGroup();
     map.addLayer(drawnItems);
+    // Force high z-index for the selection layer
+    (drawnItems as any).setZIndex && (drawnItems as any).setZIndex(1000);
     drawnItemsRef.current = drawnItems;
 
     // Initialize Draw Control
