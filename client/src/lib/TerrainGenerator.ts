@@ -129,8 +129,8 @@ export class TerrainGenerator {
     let maxSegments = 256;
     if (this.options.resolution === 'low') maxSegments = 128;
     if (this.options.resolution === 'medium') maxSegments = 256;
-    if (this.options.resolution === 'high') maxSegments = 512;
-    if (this.options.resolution === 'ultra') maxSegments = 2048; // Significantly increased
+    if (this.options.resolution === 'high') maxSegments = 384;
+    if (this.options.resolution === 'ultra') maxSegments = 1024; // Reduced from 2048 to prevent browser crashes
 
     // Ensure we don't sample more than available pixels
     const segmentsX = Math.min(width, maxSegments);

@@ -185,7 +185,27 @@ export default function Home() {
 
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
-      if (rendererRef.current) rendererRef.current.dispose();
+      
+      // Full cleanup to prevent memory leaks
+      if (sceneRef.current) {
+          sceneRef.current.traverse((object) => {
+              if (object instanceof THREE.Mesh) {
+                  if (object.geometry) object.geometry.dispose();
+                  if (object.material) {
+                      if (Array.isArray(object.material)) {
+                          object.material.forEach(m => m.dispose());
+                      } else {
+                          object.material.dispose();
+                      }
+                  }
+              }
+          });
+      }
+      
+      if (rendererRef.current) {
+          rendererRef.current.dispose();
+          rendererRef.current.forceContextLoss();
+      }
     };
   }, [previewUrl]);
 
