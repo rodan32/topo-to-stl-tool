@@ -134,20 +134,24 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
     drawControlRef.current = drawControl;
 
     // Handle Draw Events
-    map.on(L.Draw.Event.CREATED, (e: any) => {
+    // Use string literals for events to avoid import issues
+    map.on('draw:created', (e: any) => {
+      console.log("Map: draw:created Event Fired", e);
       const layer = e.layer;
       drawnItems.clearLayers(); // Only allow one selection
       drawnItems.addLayer(layer);
       updateSelection(layer);
     });
 
-    map.on(L.Draw.Event.EDITED, (e: any) => {
+    map.on('draw:edited', (e: any) => {
+      console.log("Map: draw:edited Event Fired");
       e.layers.eachLayer((layer: any) => {
         updateSelection(layer);
       });
     });
     
-    map.on(L.Draw.Event.DELETED, () => {
+    map.on('draw:deleted', () => {
+      console.log("Map: draw:deleted Event Fired");
       onBoundsChange(null);
     });
 
@@ -184,6 +188,7 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
 
   const updateSelection = (layer: L.Rectangle) => {
     const bounds = layer.getBounds();
+    console.log("Map: Updating Selection Bounds", bounds);
     onBoundsChange({
       north: bounds.getNorth(),
       south: bounds.getSouth(),

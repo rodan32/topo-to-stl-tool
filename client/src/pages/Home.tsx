@@ -77,7 +77,9 @@ export default function Home() {
       }
 
       if (forPreview) {
+        console.log("Home: Preview Blob generated, size:", blob.size);
         const url = URL.createObjectURL(blob);
+        console.log("Home: Setting Preview URL:", url);
         setPreviewUrl(url);
       } else {
         const url = URL.createObjectURL(blob);
@@ -162,9 +164,17 @@ export default function Home() {
       // Fit camera to object
       const box = new THREE.Box3().setFromObject(mesh);
       const size = box.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
-      camera.position.set(maxDim, maxDim * 1.5, maxDim * 1.5);
-      camera.lookAt(0, 0, 0);
+      const center = box.getCenter(new THREE.Vector3());
+      
+      console.log("Preview Mesh Size:", size);
+      console.log("Preview Mesh Center:", center);
+
+      const maxDim = Math.max(size.x, size.y, size.z) || 100; // Fallback if size is 0
+      
+      // Position camera to view the object from a nice angle
+      camera.position.set(maxDim, maxDim, maxDim);
+      camera.lookAt(center);
+      camera.updateProjectionMatrix();
     });
 
     sceneRef.current = scene;
