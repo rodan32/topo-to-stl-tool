@@ -1,0 +1,28 @@
+# Systemd service file for Topo to STL
+# Place this in /etc/systemd/system/topo-to-stl.service
+# Then: sudo systemctl daemon-reload && sudo systemctl enable topo-to-stl
+
+[Unit]
+Description=Topo to STL Server
+After=network.target
+
+[Service]
+Type=simple
+# Change this to the user that owns the deployment directory
+User=www-data
+# Change this to your actual deployment path
+WorkingDirectory=/var/www/topo-to-stl
+Environment=NODE_ENV=production
+Environment=PORT=3000
+# Load environment variables from .env file
+EnvironmentFile=/var/www/topo-to-stl/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=10
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

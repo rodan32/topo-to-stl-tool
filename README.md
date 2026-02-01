@@ -12,82 +12,163 @@ A specialized web tool for finding locations in topographical maps and convertin
   - **Z-Exaggeration**: Scale vertical height (0.5x to 5x) to make terrain features more prominent.
   - **Base Thickness**: Add a solid base (1mm to 20mm) for structural integrity.
   - **Resolution Control**: Adjust mesh detail level to balance quality vs. file size.
-- **Browser-Based Processing**: All 3D generation happens locally in your browser—no heavy server processing required.
+- **Server-Side Processing**: Terrain generation and STL file creation happens on the server for better performance and reliability.
 - **Watertight STL**: Generates solid, manifold meshes ready for slicers (Cura, PrusaSlicer, Bambu Studio).
 
 ## Tech Stack
 
 - **Frontend**: React 19 + TypeScript + Vite
+- **Backend**: Node.js + Express + tRPC
 - **Styling**: Tailwind CSS v4 + shadcn/ui
-- **3D Engine**: Three.js
-- **Map Data**: Google Maps JS API (Visualization), AWS Terrain Tiles (Elevation Data)
+- **3D Engine**: Three.js (preview), node-canvas (server-side generation)
+- **Map Data**: OpenTopoMap (free, OpenStreetMap-based), AWS Terrain Tiles (Elevation Data)
 
 ## Self-Hosting Guide
 
-This application is designed to be easily self-hosted on a Linux VM with Nginx.
+This application is designed to be easily self-hosted on a Linux VM.
 
 ### Prerequisites
 
-- Node.js 18+
-- Nginx
+- Node.js 20.11+ (required for `import.meta.dirname` support)
+- pnpm
 
-### 1. Build the Application
+### Direct Node.js Deployment
 
-Clone the repository and build the static assets:
-
+1. **Clone and install:**
 ```bash
 git clone https://github.com/rodan32/topo-to-stl.git
 cd topo-to-stl
 pnpm install
+```
+
+2. **Create environment file:**
+Create a `.env` file in the root directory:
+```env
+NODE_ENV=production
+PORT=3000
+JWT_SECRET=your-secret-key-here-change-in-production
+# VITE_GOOGLE_MAPS_API_KEY=your-google-maps-api-key-here  # Optional - not required
+```
+
+3. **Build the application:**
+```bash
 pnpm build
 ```
 
-This will generate a `dist` folder containing the compiled HTML, CSS, and JavaScript files.
+This will generate:
+- `dist/public/` - Frontend static files
+- `dist/index.js` - Backend server bundle
 
-### 2. Configure Nginx
+4. **Start the server:**
+```bash
+pnpm start
+```
 
-Create a new Nginx configuration file (e.g., `/etc/nginx/sites-available/topo-to-stl`):
+### Using Nginx as Reverse Proxy (Optional)
 
+For production, you may want to use Nginx as a reverse proxy in front of the Node.js server:
+
+1. **Install and configure Nginx:**
+Create `/etc/nginx/sites-available/topo-to-stl`:
 ```nginx
 server {
     listen 80;
     server_name topo.yourdomain.com;
 
-    root /var/www/topo-to-stl/dist;
-    index index.html;
-
     location / {
-        try_files $uri $uri/ /index.html;
+        proxy_pass http://localhost:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Optional: Gzip compression for faster loading
-    gzip on;
-    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+    # Increase body size for large STL file uploads
+    client_max_body_size 50M;
 }
 ```
 
-### 3. Deploy
-
-1. Copy the contents of the `dist` folder to your web root (e.g., `/var/www/topo-to-stl/dist`).
-2. Enable the site and restart Nginx:
-
+2. **Enable the site:**
 ```bash
 sudo ln -s /etc/nginx/sites-available/topo-to-stl /etc/nginx/sites-enabled/
+sudo nginx -t
 sudo systemctl restart nginx
 ```
 
-## API Keys
-
-This project uses Google Maps. For self-hosting, you will need your own Google Maps API Key with the following APIs enabled:
-- Maps JavaScript API
-
-Create a `.env` file in the root directory during build time:
-
-```env
-VITE_GOOGLE_MAPS_API_KEY=your_api_key_here
+3. **Run the Node.js server** (using PM2 or systemd):
+```bash
+# Using PM2
+pm2 start dist/index.js --name topo-to-stl
+pm2 save
+pm2 startup
 ```
 
-*Note: The current version uses a proxy for development. For production, you must replace the proxy implementation in `client/src/components/Map.tsx` with direct Google Maps loading using your key.*
+### Systemd Service (Optional)
+
+Create `/etc/systemd/system/topo-to-stl.service`:
+```ini
+[Unit]
+Description=Topo to STL Server
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/topo-to-stl
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then enable and start:
+```bash
+sudo systemctl enable topo-to-stl
+sudo systemctl start topo-to-stl
+```
+
+## Environment Variables
+
+Create a `.env` file in the root directory with the following variables:
+
+### Required
+- `NODE_ENV` - Set to `production` for production deployment
+- `PORT` - Port number for the server (default: 3000)
+- `JWT_SECRET` - Secret key for JWT tokens (generate a random string)
+
+### Optional
+- `VITE_GOOGLE_MAPS_API_KEY` - Google Maps API key (optional - not required)
+  - The app uses free OpenTopoMap for map display by default
+  - Google Maps API is only needed for optional advanced features
+- `DATABASE_URL` - Database connection string (only if using database features)
+- `OAUTH_SERVER_URL` - OAuth server URL (only if using OAuth)
+- `OWNER_OPEN_ID` - Owner OpenID (only if using OAuth)
+
+Example `.env` file:
+```env
+NODE_ENV=production
+PORT=3000
+JWT_SECRET=your-secret-key-here-change-in-production
+# VITE_GOOGLE_MAPS_API_KEY=your-google-maps-api-key-here  # Optional - not required
+```
+
+## Development
+
+To run in development mode:
+
+```bash
+pnpm install
+pnpm dev
+```
+
+This will start the development server with hot-reload at `http://localhost:3000`
 
 ## License
 
