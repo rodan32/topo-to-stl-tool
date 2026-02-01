@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import Map, { MapRef } from "@/components/Map";
 import Controls from "@/components/Controls";
-import { TerrainGenerator } from "@/lib/TerrainGenerator";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import * as THREE from "three";
 import { Planet } from "@/components/PlanetSelector";
 import { toast } from "sonner";
 import { X } from "lucide-react";
+import { trpc } from "@/lib/trpc";
 
 interface Bounds {
   north: number;
@@ -53,12 +53,14 @@ export default function Home() {
     }
   };
 
+  const terrainMutation = trpc.terrain.generate.useMutation();
+
   const generateModel = async (forPreview: boolean) => {
     if (!selectionBounds) return;
 
     setIsProcessing(true);
     try {
-      const generator = new TerrainGenerator({
+      const result = await terrainMutation.mutateAsync({
         bounds: selectionBounds,
         exaggeration: exaggeration[0],
         baseHeight: baseHeight[0],
@@ -67,14 +69,22 @@ export default function Home() {
         shape: shape,
         planet: planet,
         lithophane: lithophane,
-        invert: invert
+        invert: invert,
       });
 
-      const blob = await generator.generate();
-
-      if (generator.fallbackTriggered) {
-          toast.warning("Area too large for selected resolution. Automatically adjusted zoom to ensure stability.");
+      if (result.fallbackTriggered) {
+        toast.warning(
+          "Area too large for selected resolution. Automatically adjusted zoom to ensure stability."
+        );
       }
+
+      // Decode base64 STL to Blob
+      const binaryString = atob(result.stl);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: "application/octet-stream" });
 
       if (forPreview) {
         console.log("Home: Preview Blob generated, size:", blob.size);

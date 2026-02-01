@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1769914352858,
+      "tag": "0000_far_sharon_carter",
+      "breakpoints": true
+    }
+  ]
+}
