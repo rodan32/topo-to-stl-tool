@@ -1,0 +1,24 @@
+# Systemd service for Topo to STL (topo.zarchstuff.com)
+# Install: sudo cp /root/topo-to-stl-tool/deploy/topo-to-stl.service /etc/systemd/system/
+#         sudo systemctl daemon-reload && sudo systemctl enable topo-to-stl && sudo systemctl start topo-to-stl
+
+[Unit]
+Description=Topo to STL Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/topo-to-stl-tool
+Environment=NODE_ENV=production
+Environment=PORT=3001
+EnvironmentFile=/root/topo-to-stl-tool/.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

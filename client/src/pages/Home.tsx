@@ -31,6 +31,10 @@ export default function Home() {
 
   // Preview State
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  /** Last elevation data source used (for attribution). */
+  const [lastElevationSource, setLastElevationSource] = useState<
+    "usgs3dep" | "terrarium" | "mars" | "moon" | null
+  >(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -50,13 +54,28 @@ export default function Home() {
   const handleStartDrawing = () => {
     if (mapRef.current) {
       mapRef.current.startDrawing();
+      toast.info("Click and drag on the map to draw a selection.", {
+        duration: 5000,
+      });
+    }
+  };
+
+  const handleResizeSelection = () => {
+    if (mapRef.current) {
+      mapRef.current.startEditing();
+      toast.info("Click the selection, then drag corners or edges to resize.", {
+        duration: 5000,
+      });
     }
   };
 
   const terrainMutation = trpc.terrain.generate.useMutation();
 
   const generateModel = async (forPreview: boolean) => {
-    if (!selectionBounds) return;
+    if (!selectionBounds) {
+      if (forPreview) toast.error("Draw a region on the map first, then click Preview.");
+      return;
+    }
 
     setIsProcessing(true);
     try {
@@ -72,12 +91,6 @@ export default function Home() {
         invert: invert,
       });
 
-      if (result.fallbackTriggered) {
-        toast.warning(
-          "Area too large for selected resolution. Automatically adjusted zoom to ensure stability."
-        );
-      }
-
       // Decode base64 STL to Blob
       const binaryString = atob(result.stl);
       const bytes = new Uint8Array(binaryString.length);
@@ -85,6 +98,10 @@ export default function Home() {
         bytes[i] = binaryString.charCodeAt(i);
       }
       const blob = new Blob([bytes], { type: "application/octet-stream" });
+
+      if (result.elevationSource) {
+        setLastElevationSource(result.elevationSource);
+      }
 
       if (forPreview) {
         console.log("Home: Preview Blob generated, size:", blob.size);
@@ -104,8 +121,7 @@ export default function Home() {
       }
     } catch (error: any) {
       console.error("Generation failed:", error);
-      const message = error.message || "Failed to generate model. Try a smaller area or lower resolution.";
-      toast.error(message);
+      toast.error("Couldn't generate a model for this area.");
     } finally {
       setIsProcessing(false);
     }
@@ -151,41 +167,49 @@ export default function Home() {
 
     // Load STL
     const loader = new STLLoader();
-    loader.load(previewUrl, (geometry) => {
-      geometry.computeVertexNormals();
-      
-      // Center geometry
-      geometry.center();
-      
-      // Material
-      const material = new THREE.MeshStandardMaterial({ 
-        color: 0x00aaff, 
-        metalness: 0.2, 
-        roughness: 0.6,
-        flatShading: false
-      });
-      
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.rotation.x = -Math.PI / 2; // Rotate to sit flat on grid
-      
-      scene.add(mesh);
-      meshRef.current = mesh;
+    loader.load(
+      previewUrl,
+      (geometry) => {
+        if (!geometry.attributes.position || geometry.attributes.position.count === 0) {
+          console.error("STL preview: empty geometry");
+          setPreviewUrl(null);
+          return;
+        }
+        geometry.computeVertexNormals();
 
-      // Fit camera to object
-      const box = new THREE.Box3().setFromObject(mesh);
-      const size = box.getSize(new THREE.Vector3());
-      const center = box.getCenter(new THREE.Vector3());
-      
-      console.log("Preview Mesh Size:", size);
-      console.log("Preview Mesh Center:", center);
+        const material = new THREE.MeshStandardMaterial({
+          color: 0x00aaff,
+          metalness: 0.2,
+          roughness: 0.6,
+          flatShading: false,
+        });
 
-      const maxDim = Math.max(size.x, size.y, size.z) || 100; // Fallback if size is 0
-      
-      // Position camera to view the object from a nice angle
-      camera.position.set(maxDim, maxDim, maxDim);
-      camera.lookAt(center);
-      camera.updateProjectionMatrix();
-    });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.rotation.x = -Math.PI / 2; // STL Z-up → Three.js Y-up (base was z=0, now y=0)
+
+        scene.add(mesh);
+        mesh.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(mesh);
+        // Move mesh so its base (min Y after rotation) sits on the grid at y=0
+        mesh.position.y = -box.min.y;
+        meshRef.current = mesh;
+
+        mesh.updateMatrixWorld(true);
+        box.setFromObject(mesh);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z) || 100;
+
+        camera.position.set(maxDim, maxDim, maxDim);
+        camera.lookAt(center);
+        camera.updateProjectionMatrix();
+      },
+      undefined,
+      (error) => {
+        console.error("STL preview load failed:", error);
+        setPreviewUrl(null);
+      }
+    );
 
     sceneRef.current = scene;
     cameraRef.current = camera;
@@ -231,12 +255,17 @@ export default function Home() {
 
   return (
     <div className="w-full h-screen relative overflow-hidden bg-background">
-      <Map 
-        ref={mapRef}
-        onBoundsChange={setSelectionBounds} 
-        planet={planet} 
-      />
-      
+      {/* Map fills viewport so it always has size for draw events */}
+      <div className="absolute inset-0 z-0">
+        <Map
+          ref={mapRef}
+          onBoundsChange={setSelectionBounds}
+          planet={planet}
+          selectionBounds={selectionBounds}
+          shape={shape}
+        />
+      </div>
+
       <Controls
         onExport={() => generateModel(false)}
         onPreview={() => generateModel(true)}
@@ -261,15 +290,20 @@ export default function Home() {
         setInvert={setInvert}
         onLandmarkSelect={handleLandmarkSelect}
         onStartDrawing={handleStartDrawing}
+        onResizeSelection={handleResizeSelection}
+        lastElevationSource={lastElevationSource}
+        onSetBoundsFromManual={setSelectionBounds}
+        onClearSelection={() => setSelectionBounds(null)}
       />
 
       {/* Preview Overlay */}
       {previewUrl && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+        <div className="absolute inset-0 z-[1100] flex items-center justify-center bg-black/80 backdrop-blur-sm">
           <div className="relative w-[80vw] h-[80vh] bg-background border border-border shadow-2xl rounded-lg overflow-hidden">
-            <button 
+            <button
               onClick={() => setPreviewUrl(null)}
-              className="absolute top-4 right-4 z-10 p-2 bg-destructive text-destructive-foreground rounded-full hover:bg-destructive/90 transition-colors"
+              className="absolute top-4 right-4 z-10 p-2 bg-destructive text-destructive-foreground rounded-full hover:bg-destructive/90 transition-colors shadow-lg ring-2 ring-background/50"
+              aria-label="Close preview"
             >
               <X className="w-5 h-5" />
             </button>

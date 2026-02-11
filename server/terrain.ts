@@ -29,6 +29,81 @@ const decodeElevationPlanetary = (r: number, g: number, b: number): number => {
   return val * 100;
 };
 
+// USGS 3DEP elevation service (National Map) - used for Earth when bounds are in the US
+const USGS_3DEP_EXPORT =
+  "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage";
+
+/** Rough bounds for US coverage (CONUS, Alaska, Hawaii, PR, etc.) */
+function isBoundsInUS(bounds: {
+  north: number;
+  south: number;
+  east: number;
+  west: number;
+}): boolean {
+  const usWest = -180;
+  const usEast = -64;
+  const usSouth = 17;
+  const usNorth = 72;
+  return (
+    bounds.west < usEast &&
+    bounds.east > usWest &&
+    bounds.south < usNorth &&
+    bounds.north > usSouth
+  );
+}
+
+/**
+ * Fetch elevation raster from USGS 3DEP for the given WGS84 bounds.
+ * Returns { data, width, height } in meters, or null on failure.
+ * PNG from 3DEP is 8-bit stretched. The service uses dark = high elevation, light = low,
+ * so we invert the gray scale to get correct terrain (peaks high, valleys low).
+ */
+async function fetchUSGS3DEPElevation(
+  bounds: { north: number; south: number; east: number; west: number },
+  width: number,
+  height: number
+): Promise<{ data: Float32Array; width: number; height: number } | null> {
+  const w = Math.min(width, 2048);
+  const h = Math.min(height, 2048);
+  const bbox = `${bounds.west},${bounds.south},${bounds.east},${bounds.north}`;
+  const url = `${USGS_3DEP_EXPORT}?bbox=${bbox}&bboxSR=4326&size=${w},${h}&imageSR=4326&format=png&f=image`;
+  try {
+    const response = await axios.get(url, {
+      responseType: "arraybuffer",
+      timeout: 60000,
+    });
+    const buf = Buffer.isBuffer(response.data)
+      ? response.data
+      : Buffer.from(response.data as ArrayBuffer);
+    const img = await loadImage(buf);
+    const canvas = createCanvas(img.width, img.height);
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0);
+    const imageData = ctx.getImageData(0, 0, img.width, img.height);
+    const data = imageData.data;
+    const out = new Float32Array(img.width * img.height);
+    const ELEV_MIN = -500;
+    const ELEV_MAX = 6500;
+    for (let i = 0; i < out.length; i++) {
+      const r = data[i * 4];
+      const g = data[i * 4 + 1];
+      const b = data[i * 4 + 2];
+      const a = data[i * 4 + 3];
+      if (a === 0) {
+        out[i] = NaN;
+        continue;
+      }
+      const gray = (r + g + b) / 3;
+      // 3DEP PNG: dark = high elev, light = low — invert so peaks are high in our mesh
+      out[i] = ELEV_MAX - (gray / 255) * (ELEV_MAX - ELEV_MIN);
+    }
+    return { data: out, width: img.width, height: img.height };
+  } catch (err) {
+    console.warn("USGS 3DEP fetch failed, falling back to Terrarium:", err);
+    return null;
+  }
+}
+
 // Calculate tile coordinates from lat/lon and zoom
 const long2tile = (lon: number, zoom: number) => {
   return Math.floor(((lon + 180) / 360) * Math.pow(2, zoom));
@@ -115,27 +190,61 @@ function createSTLBinary(vertices: number[], indices: number[]): Buffer {
   return buffer;
 }
 
+export type ElevationSource = "usgs3dep" | "terrarium" | "mars" | "moon";
+
 export class TerrainGenerator {
   private options: TerrainOptions;
   public fallbackTriggered: boolean = false;
+  /** Which elevation data source was used (for UI credit/attribution). */
+  public elevationSource: ElevationSource = "terrarium";
 
   constructor(options: TerrainOptions) {
     this.options = options;
+    this.elevationSource =
+      options.planet === "mars"
+        ? "mars"
+        : options.planet === "moon"
+          ? "moon"
+          : "terrarium";
   }
 
+  private static readonly RESOLUTION_ORDER: TerrainOptions["resolution"][] = [
+    "low",
+    "medium",
+    "high",
+    "ultra",
+  ];
+  private static readonly ZOOM_BY_RES: Record<
+    TerrainOptions["resolution"],
+    number
+  > = { low: 11, medium: 12, high: 13, ultra: 14 };
+  private static readonly SEGMENTS_BY_RES: Record<
+    TerrainOptions["resolution"],
+    number
+  > = { low: 128, medium: 256, high: 384, ultra: 1024 };
+
   private getZoomLevel(): number {
-    switch (this.options.resolution) {
-      case "low":
-        return 11;
-      case "medium":
-        return 12;
-      case "high":
-        return 13;
-      case "ultra":
-        return 14;
-      default:
-        return 12;
+    return TerrainGenerator.ZOOM_BY_RES[this.options.resolution] ?? 12;
+  }
+
+  /**
+   * Build list of (zoom, maxSegments) to try: start with requested resolution,
+   * then progressively lower resolution and zoom so we deliver an STL when possible.
+   */
+  private getFallbackAttempts(): { zoom: number; maxSegments: number }[] {
+    const res = this.options.resolution;
+    const idx = TerrainGenerator.RESOLUTION_ORDER.indexOf(res);
+    const attempts: { zoom: number; maxSegments: number }[] = [];
+    const MIN_ZOOM = 5;
+    for (let r = idx; r >= 0; r--) {
+      const resolution = TerrainGenerator.RESOLUTION_ORDER[r];
+      const maxSegments = TerrainGenerator.SEGMENTS_BY_RES[resolution];
+      const startZoom = TerrainGenerator.ZOOM_BY_RES[resolution];
+      for (let z = startZoom; z >= MIN_ZOOM; z--) {
+        attempts.push({ zoom: z, maxSegments });
+      }
     }
+    return attempts;
   }
 
   async generate(): Promise<Buffer> {
@@ -150,7 +259,51 @@ export class TerrainGenerator {
       lithophane,
       invert,
     } = this.options;
-    let zoom = this.getZoomLevel();
+
+    const attempts = this.getFallbackAttempts();
+    let lastError: Error | null = null;
+
+    for (const { zoom: tryZoom, maxSegments: tryMaxSegments } of attempts) {
+      try {
+        const buffer = await this.generateAtResolution(tryZoom, tryMaxSegments);
+        if (
+          tryZoom < this.getZoomLevel() ||
+          tryMaxSegments <
+            TerrainGenerator.SEGMENTS_BY_RES[this.options.resolution]
+        ) {
+          this.fallbackTriggered = true;
+        }
+        return buffer;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        console.warn(
+          `Terrain attempt failed (zoom=${tryZoom}, segments=${tryMaxSegments}), trying lower resolution:`,
+          lastError.message
+        );
+      }
+    }
+
+    throw lastError ?? new Error("Could not generate terrain for this area.");
+  }
+
+  /**
+   * One attempt at generating STL with the given zoom and max mesh segments.
+   * May throw if tiles fail or no vertices are generated.
+   */
+  private async generateAtResolution(
+    zoom: number,
+    maxSegments: number
+  ): Promise<Buffer> {
+    const {
+      bounds,
+      exaggeration,
+      baseHeight,
+      modelWidth,
+      shape,
+      planet,
+      lithophane,
+      invert,
+    } = this.options;
 
     // Calculate dimensions
     let xMin = long2tile(bounds.west, zoom);
@@ -158,61 +311,32 @@ export class TerrainGenerator {
     let yMin = lat2tile(bounds.north, zoom);
     let yMax = lat2tile(bounds.south, zoom);
 
-    // Check if the requested area is too large
     const MAX_PIXELS = 4096;
     let width = (xMax - xMin + 1) * 256;
     let height = (yMax - yMin + 1) * 256;
 
-    if (width > MAX_PIXELS || height > MAX_PIXELS) {
-      console.warn(
-        `Area too large for Zoom ${zoom} (${width}x${height}). Downgrading resolution.`
-      );
-      this.fallbackTriggered = true;
-
-      while ((width > MAX_PIXELS || height > MAX_PIXELS) && zoom > 5) {
-        zoom--;
-        xMin = long2tile(bounds.west, zoom);
-        xMax = long2tile(bounds.east, zoom);
-        yMin = lat2tile(bounds.north, zoom);
-        yMax = lat2tile(bounds.south, zoom);
-        width = (xMax - xMin + 1) * 256;
-        height = (yMax - yMin + 1) * 256;
-      }
-      console.log(`New Zoom: ${zoom} (${width}x${height})`);
+    let actualZoom = zoom;
+    while ((width > MAX_PIXELS || height > MAX_PIXELS) && actualZoom > 5) {
+      actualZoom--;
+      xMin = long2tile(bounds.west, actualZoom);
+      xMax = long2tile(bounds.east, actualZoom);
+      yMin = lat2tile(bounds.north, actualZoom);
+      yMax = lat2tile(bounds.south, actualZoom);
+      width = (xMax - xMin + 1) * 256;
+      height = (yMax - yMin + 1) * 256;
     }
 
-    console.log(`Grid: X[${xMin}-${xMax}] Y[${yMin}-${yMax}] Zoom: ${zoom}`);
-
-    const canvas = createCanvas(width, height);
-    const ctx = canvas.getContext("2d");
-
-    const tilePromises = [];
-    for (let x = xMin; x <= xMax; x++) {
-      for (let y = yMin; y <= yMax; y++) {
-        tilePromises.push(this.loadTile(x, y, zoom, x - xMin, y - yMin, ctx, planet));
-      }
-    }
-
-    await Promise.all(tilePromises);
-    console.log("All tiles loaded");
-
-    const imageData = ctx.getImageData(0, 0, width, height);
-    const data = imageData.data;
-    console.log(`Image Data size: ${data.length}, W: ${width}, H: ${height}`);
+    console.log(
+      `Grid: X[${xMin}-${xMax}] Y[${yMin}-${yMax}] Zoom: ${actualZoom}`
+    );
 
     const latSpan = bounds.north - bounds.south;
     const lonSpan = bounds.east - bounds.west;
     const aspectRatio = lonSpan / latSpan;
 
-    // Dynamic resolution
-    let maxSegments = 256;
-    if (this.options.resolution === "low") maxSegments = 128;
-    if (this.options.resolution === "medium") maxSegments = 256;
-    if (this.options.resolution === "high") maxSegments = 384;
-    if (this.options.resolution === "ultra") maxSegments = 1024;
-
-    const segmentsX = Math.min(width, maxSegments);
-    const segmentsY = Math.round(segmentsX / aspectRatio);
+    // Ensure at least 2x2 so we always get quads and a valid watertight mesh
+    const segmentsX = Math.max(2, Math.min(width, maxSegments));
+    const segmentsY = Math.max(2, Math.round(segmentsX / aspectRatio));
 
     const modelHeight = modelWidth / aspectRatio;
 
@@ -220,10 +344,48 @@ export class TerrainGenerator {
       `Mesh Grid: ${segmentsX}x${segmentsY}, Model Size: ${modelWidth}x${modelHeight}`
     );
 
+    // Earth: use Terrarium tiles only. Raw RGB-encoded elevation (meters) — no display-image guesswork.
+    // (3DEP PNG export is a rendered image; interpreting it as elevation produced wrong/spiky terrain.)
+    let usgsElev: Float32Array | null = null;
+    let usgsWidth = 0;
+    let usgsHeight = 0;
+
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext("2d");
+
+    if (!usgsElev) {
+      const tilePromises = [];
+      for (let x = xMin; x <= xMax; x++) {
+        for (let y = yMin; y <= yMax; y++) {
+          tilePromises.push(
+            this.loadTile(x, y, actualZoom, x - xMin, y - yMin, ctx, planet)
+          );
+        }
+      }
+      await Promise.all(tilePromises);
+      console.log("All tiles loaded");
+    }
+
+    const imageData = ctx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+
     const vertices: number[] = [];
     const indices: number[] = [];
 
-    const getElevation = (col: number, row: number) => {
+    const getElevation = (col: number, row: number): number | null => {
+      if (usgsElev && usgsWidth > 0 && usgsHeight > 0) {
+        const imgX = Math.floor(
+          (col / Math.max(1, segmentsX - 1)) * (usgsWidth - 1)
+        );
+        const imgY = Math.floor(
+          (row / Math.max(1, segmentsY - 1)) * (usgsHeight - 1)
+        );
+        const idx = imgY * usgsWidth + imgX;
+        if (idx < 0 || idx >= usgsElev.length) return null;
+        const v = usgsElev[idx];
+        return Number.isFinite(v) ? v : null;
+      }
+
       const imgX = Math.floor((col / (segmentsX - 1)) * (width - 1));
       const imgY = Math.floor((row / (segmentsY - 1)) * (height - 1));
 
@@ -233,20 +395,19 @@ export class TerrainGenerator {
       const r = data[index];
       const g = data[index + 1];
       const b = data[index + 2];
-
       const a = data[index + 3];
       if (a === 0) return null;
 
       if (planet === "earth") {
         return decodeElevationEarth(r, g, b);
-      } else {
-        return decodeElevationPlanetary(r, g, b);
       }
+      return decodeElevationPlanetary(r, g, b);
     };
 
-    let minElev = Infinity;
-    let maxElev = -Infinity;
-    let validPoints = 0;
+    // Build elevation grid and collect valid values for robust range (percentile-based to ignore outliers)
+    const elevGrid = new Float32Array(segmentsX * segmentsY);
+    elevGrid.fill(NaN);
+    const validElevs: number[] = [];
 
     for (let y = 0; y < segmentsY; y++) {
       for (let x = 0; x < segmentsX; x++) {
@@ -259,22 +420,56 @@ export class TerrainGenerator {
         }
 
         const elev = getElevation(x, y);
-        if (elev !== null) {
-          if (elev < minElev) minElev = elev;
-          if (elev > maxElev) maxElev = elev;
-          validPoints++;
+        if (elev !== null && Number.isFinite(elev)) {
+          const i = y * segmentsX + x;
+          elevGrid[i] = elev;
+          validElevs.push(elev);
         }
       }
     }
 
-    if (validPoints === 0 || minElev === Infinity || maxElev === -Infinity) {
+    let minElev: number;
+    let maxElev: number;
+
+    if (validElevs.length === 0) {
       console.warn("No valid elevation points found. Using default flat terrain.");
       minElev = 0;
       maxElev = 100;
-      validPoints = 1;
-    }
+    } else {
+      minElev = Math.min(...validElevs);
+      maxElev = Math.max(...validElevs);
+      console.log(
+        `Elevation Range: ${minElev.toFixed(0)} to ${maxElev.toFixed(0)} m (full range; ${validElevs.length} points)`
+      );
+      // No percentile clamping – use full range so summits (e.g. Timp ~3581 m) aren't cut off
 
-    console.log(`Elevation Range: ${minElev} to ${maxElev}`);
+      // Single 3x3 median – removes single-pixel spikes, keeps terrain detail
+      const medianPass = new Float32Array(elevGrid.length);
+      medianPass.set(elevGrid);
+      const win: number[] = [];
+      for (let y = 0; y < segmentsY; y++) {
+        for (let x = 0; x < segmentsX; x++) {
+          const i = y * segmentsX + x;
+          if (!Number.isFinite(elevGrid[i])) continue;
+          win.length = 0;
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              const nx = x + dx;
+              const ny = y + dy;
+              if (nx >= 0 && nx < segmentsX && ny >= 0 && ny < segmentsY) {
+                const v = elevGrid[ny * segmentsX + nx];
+                if (Number.isFinite(v)) win.push(v);
+              }
+            }
+          }
+          if (win.length > 0) {
+            win.sort((a, b) => a - b);
+            medianPass[i] = win[Math.floor(win.length / 2)];
+          }
+        }
+      }
+      for (let i = 0; i < elevGrid.length; i++) elevGrid[i] = medianPass[i];
+    }
 
     const centerLat = (bounds.north + bounds.south) / 2;
     const metersPerDegreeLon = 111132.954 * Math.cos((centerLat * Math.PI) / 180);
@@ -293,11 +488,12 @@ export class TerrainGenerator {
     const minThickness = 0.8;
     const maxThickness = 4.0;
     const thicknessRange = maxThickness - minThickness;
-    const elevationRange = maxElev - minElev || 1;
 
     const gridMap = new Int32Array(segmentsX * segmentsY).fill(-1);
 
-    // Generate Top Surface
+    const elevationRange = maxElev - minElev || 1;
+
+    // Generate Top Surface (use clamped + smoothed elevation grid)
     for (let y = 0; y < segmentsY; y++) {
       for (let x = 0; x < segmentsX; x++) {
         if (shape === "oval") {
@@ -308,8 +504,8 @@ export class TerrainGenerator {
           if (dx * dx + dy * dy > 1.0) continue;
         }
 
-        let elev = getElevation(x, y);
-        if (elev === null) elev = minElev;
+        const idx = y * segmentsX + x;
+        let elev = Number.isFinite(elevGrid[idx]) ? elevGrid[idx] : minElev;
 
         let z = 0;
 
@@ -450,6 +646,13 @@ export class TerrainGenerator {
           }
         }
       }
+    }
+
+    const triangleCount = indices.length / 3;
+    if (triangleCount === 0) {
+      throw new Error(
+        "No mesh triangles generated. Try a larger area, rectangle shape, or different location."
+      );
     }
 
     console.log("Mesh created, starting STL export...");

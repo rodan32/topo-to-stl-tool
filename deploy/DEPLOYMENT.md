@@ -42,14 +42,16 @@ pnpm build
 
 ## Step 2: Configure Nginx
 
+This adds a **new** server block; it does not replace your default or other site configs. Use a dedicated `server_name` (e.g. `topo.yourdomain.com`) so it coexists with other sites on the same server.
+
 ```bash
-# Copy the Nginx config
+# Copy the Nginx config (do not overwrite existing configs)
 sudo cp deploy/nginx.conf.example /etc/nginx/sites-available/topo-to-stl
 
-# Edit the config (change server_name if needed)
+# Edit the config (set server_name to your subdomain or hostname)
 sudo nano /etc/nginx/sites-available/topo-to-stl
 
-# Enable the site
+# Enable the site (adds this app alongside existing sites)
 sudo ln -s /etc/nginx/sites-available/topo-to-stl /etc/nginx/sites-enabled/
 
 # Test Nginx configuration

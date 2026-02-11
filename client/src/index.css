@@ -209,6 +209,24 @@
     fill-opacity: 0.2;
   }
 
+  /* Crosshair cursor when draw selector is active (Draw Selection) */
+  .topo-drawing-active,
+  .topo-drawing-active .leaflet-container,
+  .topo-drawing-active .leaflet-pane,
+  .topo-drawing-active .leaflet-top,
+  .topo-drawing-active .leaflet-bottom {
+    cursor: crosshair !important;
+  }
+
+  /* Selection rectangle while drawing – always high visibility */
+  path.topo-selection-rect {
+    stroke: #e62e00 !important;
+    stroke-width: 5px !important;
+    fill: #ff6b35 !important;
+    fill-opacity: 0.35 !important;
+    pointer-events: none;
+  }
+
   @media (min-width: 640px) {
     .container {
       padding-left: 1.5rem;

@@ -4,6 +4,12 @@ A specialized web tool for finding locations in topographical maps and convertin
 
 ![Project Screenshot](https://raw.githubusercontent.com/rodan32/topo-to-stl/main/screenshot.png)
 
+## Acceptance criteria
+
+- **Map selection and feedback**: The user selects a rectangle or oval on the map and is shown clear visual feedback of that selection process (e.g. visible shape while drawing and after, coordinates or bounds reflected in the UI).
+- **STL preview**: The STL preview shows visual feedback of the model to be created so the user can determine if selection and elevation exaggeration is correct.
+- **STL export**: The STL export has a correct mesh, no errors, and is suitable for immediate import into a 3D printer slicer app.
+
 ## Features
 
 - **Interactive Map**: Global map interface (Google Maps style) to easily find any location on Earth.
@@ -21,7 +27,7 @@ A specialized web tool for finding locations in topographical maps and convertin
 - **Backend**: Node.js + Express + tRPC
 - **Styling**: Tailwind CSS v4 + shadcn/ui
 - **3D Engine**: Three.js (preview), node-canvas (server-side generation)
-- **Map Data**: OpenTopoMap (free, OpenStreetMap-based), AWS Terrain Tiles (Elevation Data)
+- **Map Data**: OpenTopoMap (display). Elevation: USGS 3DEP for US areas, AWS Terrarium elsewhere. See [DATA_SOURCES.md](DATA_SOURCES.md).
 
 ## Self-Hosting Guide
 

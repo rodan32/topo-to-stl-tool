@@ -22,12 +22,16 @@ export const appRouter = router({
     generate: publicProcedure
       .input(
         z.object({
-          bounds: z.object({
-            north: z.number(),
-            south: z.number(),
-            east: z.number(),
-            west: z.number(),
-          }),
+          bounds: z
+            .object({
+              north: z.number(),
+              south: z.number(),
+              east: z.number(),
+              west: z.number(),
+            })
+            .refine((b) => b.north > b.south && b.east > b.west, {
+              message: "Selection must have positive area (north > south, east > west).",
+            }),
           exaggeration: z.number(),
           baseHeight: z.number(),
           modelWidth: z.number(),
@@ -42,11 +46,11 @@ export const appRouter = router({
         const { TerrainGenerator } = await import("./terrain");
         const generator = new TerrainGenerator(input);
         const stlBuffer = await generator.generate();
-        
-        // Return base64-encoded STL for transmission
+
         return {
           stl: stlBuffer.toString("base64"),
           fallbackTriggered: generator.fallbackTriggered,
+          elevationSource: generator.elevationSource,
         };
       }),
   }),
