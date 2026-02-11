@@ -227,6 +227,17 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
       const drawControl = drawControlRef.current;
       const drawnItems = drawnItemsRef.current;
       if (!drawControl || !drawnItems || drawnItems.getLayers().length === 0) return;
+      // For ovals, Leaflet-draw would add 48 vertex handles. Swap to a rectangle
+      // so we get 4 corner handles like the rectangle shape.
+      if (shapeRef.current === "oval") {
+        const layers = drawnItems.getLayers();
+        const layer = layers[0] as L.Polygon;
+        if (layer && typeof layer.getBounds === "function") {
+          const bounds = layer.getBounds();
+          drawnItems.clearLayers();
+          drawnItems.addLayer(L.rectangle(bounds, RECT_STYLE));
+        }
+      }
       const toolbars = (drawControl as any)._toolbars;
       const editToolbar = toolbars?.edit;
       const editHandler = editToolbar?._modes?.edit?.handler;

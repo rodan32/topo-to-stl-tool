@@ -71,12 +71,12 @@ export default function LandmarkSearch({ onSelect, planet }: LandmarkSearchProps
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" className="w-full justify-start text-muted-foreground bg-background/50 backdrop-blur border-primary/20 hover:bg-primary/10 hover:text-primary">
+        <Button variant="outline" className="w-[280px] justify-start text-muted-foreground bg-card/95 backdrop-blur border border-border shadow-lg hover:bg-primary/10 hover:text-primary">
           <Search className="mr-2 h-4 w-4" />
           {planet === "earth" ? "Search mountains, canyons..." : "Jump to landmark..."}
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="p-0 w-[300px]" align="start">
+      <PopoverContent className="p-0 w-[300px] z-[1100]" align="start">
         <Command>
           <CommandInput 
             placeholder={planet === "earth" ? "Search Earth..." : "Filter landmarks..."} 

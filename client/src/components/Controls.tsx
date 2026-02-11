@@ -7,7 +7,6 @@ import { Switch } from "@/components/ui/switch";
 import { Download, Map as MapIcon, Settings, Box, RefreshCw, Eye, Circle, Layers, PenTool, Type, Move } from "lucide-react";
 import { Link } from "wouter";
 import PlanetSelector, { Planet } from "./PlanetSelector";
-import LandmarkSearch from "./LandmarkSearch";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
 
@@ -35,7 +34,6 @@ interface ControlsProps {
   setLithophane: (val: boolean) => void;
   invert: boolean;
   setInvert: (val: boolean) => void;
-  onLandmarkSelect: (lat: number, lng: number, zoom: number) => void;
   onStartDrawing: () => void;
   onResizeSelection: () => void;
   lastElevationSource: "usgs3dep" | "terrarium" | "mars" | "moon" | null;
@@ -65,7 +63,6 @@ export default function Controls({
   setLithophane,
   invert,
   setInvert,
-  onLandmarkSelect,
   onStartDrawing,
   onResizeSelection,
   lastElevationSource,
@@ -242,9 +239,6 @@ export default function Controls({
         </CardContent>
       </Card>
 
-      {/* Search Panel */}
-      <LandmarkSearch onSelect={onLandmarkSelect} planet={planet} />
-
       {/* Settings Panel */}
       <Card className="glass-panel rounded-none">
         <CardHeader className="py-3 px-4">
@@ -377,103 +371,108 @@ export default function Controls({
       </Card>
 
       {/* Action Panel */}
-      <div className="grid grid-cols-2 gap-2">
-        <Button 
-          size="lg" 
-          variant="outline"
-          className="w-full rounded-none font-mono uppercase tracking-wider text-xs h-12 border-primary text-primary hover:bg-primary hover:text-primary-foreground"
-          disabled={!selectionBounds || isProcessing}
-          onClick={(e) => {
-            e.preventDefault(); // Prevent any default form submission behavior
-            console.log("Preview button clicked"); // Debug log
-            onPreview();
-          }}
-        >
-          {isProcessing ? (
-            <RefreshCw className="w-4 h-4 animate-spin" />
-          ) : (
-            <>
-              <Eye className="w-4 h-4 mr-2" />
-              Preview
-            </>
-          )}
-        </Button>
-        
-        <Button 
-          size="lg" 
-          className="w-full rounded-none font-mono uppercase tracking-wider text-xs h-12 shadow-lg shadow-primary/20"
-          disabled={!selectionBounds || isProcessing}
-          onClick={onExport}
-        >
-          {isProcessing ? (
-            <RefreshCw className="w-4 h-4 animate-spin" />
-          ) : (
-            <>
-              <Download className="w-4 h-4 mr-2" />
-              Download
-            </>
-          )}
-        </Button>
-      </div>
-
-      {/* Elevation data source attribution */}
-      {lastElevationSource && (
-        <div className="text-[10px] font-mono text-muted-foreground border-t border-border pt-3 mt-1">
-          <span className="uppercase tracking-wider">Elevation data: </span>
-          {lastElevationSource === "usgs3dep" && (
-            <a
-              href="https://apps.nationalmap.gov/3dep/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline"
+      <Card className="glass-panel rounded-none">
+        <CardContent className="py-4 px-4">
+          <div className="grid grid-cols-2 gap-2">
+            <Button 
+              size="lg" 
+              variant="outline"
+              className="w-full rounded-none font-mono uppercase tracking-wider text-xs h-12 border-primary text-primary hover:bg-primary hover:text-primary-foreground"
+              disabled={!selectionBounds || isProcessing}
+              onClick={(e) => {
+                e.preventDefault();
+                onPreview();
+              }}
             >
-              USGS 3DEP
-            </a>
-          )}
-          {lastElevationSource === "terrarium" && (
-            <a
-              href="https://github.com/tilezen/joerd/blob/master/docs/data-sources.md"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-primary hover:underline"
+              {isProcessing ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <Eye className="w-4 h-4 mr-2" />
+                  Preview
+                </>
+              )}
+            </Button>
+            <Button 
+              size="lg" 
+              className="w-full rounded-none font-mono uppercase tracking-wider text-xs h-12 shadow-lg shadow-primary/20"
+              disabled={!selectionBounds || isProcessing}
+              onClick={onExport}
             >
-              AWS Terrarium
-            </a>
-          )}
-          {lastElevationSource === "mars" && (
-            <>
-              <a
-                href="https://astrogeology.usgs.gov/search/map/Mars/MarsOdyssey/MOLA/Mars_MGS_MOLA_DEM_mosaic_0.463deg"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline"
-              >
-                NASA MOLA
-              </a>
-              {" / CARTO"}
-            </>
-          )}
-          {lastElevationSource === "moon" && (
-            <>
-              <a
-                href="https://astrogeology.usgs.gov/search/map/Moon/LRO/LOLA/Lunar_LRO_LOLA_Global_LDEM_118m_Mar2014"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-primary hover:underline"
-              >
-                NASA LRO LOLA
-              </a>
-              {" / CARTO"}
-            </>
-          )}
-        </div>
-      )}
+              {isProcessing ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <>
+                  <Download className="w-4 h-4 mr-2" />
+                  Download
+                </>
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
-      <div className="text-[10px] font-mono text-muted-foreground border-t border-border pt-3 mt-1">
-        <Link href="/thanks" className="text-primary hover:underline uppercase tracking-wider">
-          Thanks &amp; data sources
-        </Link>
-      </div>
+      {/* Elevation data source & Thanks */}
+      <Card className="glass-panel rounded-none text-card-foreground">
+        <CardContent className="py-3 px-4 space-y-3">
+          {lastElevationSource && (
+            <div className="text-[10px] font-mono text-foreground">
+              <span className="uppercase tracking-wider">Elevation data: </span>
+              {lastElevationSource === "usgs3dep" && (
+                <a
+                  href="https://apps.nationalmap.gov/3dep/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  USGS 3DEP
+                </a>
+              )}
+              {lastElevationSource === "terrarium" && (
+                <a
+                  href="https://github.com/tilezen/joerd/blob/master/docs/data-sources.md"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  AWS Terrarium
+                </a>
+              )}
+              {lastElevationSource === "mars" && (
+                <>
+                  <a
+                    href="https://astrogeology.usgs.gov/search/map/Mars/MarsOdyssey/MOLA/Mars_MGS_MOLA_DEM_mosaic_0.463deg"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline"
+                  >
+                    NASA MOLA
+                  </a>
+                  {" / CARTO"}
+                </>
+              )}
+              {lastElevationSource === "moon" && (
+                <>
+                  <a
+                    href="https://astrogeology.usgs.gov/search/map/Moon/LRO/LOLA/Lunar_LRO_LOLA_Global_LDEM_118m_Mar2014"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary hover:underline"
+                  >
+                    NASA LRO LOLA
+                  </a>
+                  {" / CARTO"}
+                </>
+              )}
+            </div>
+          )}
+          <div className="text-[10px] font-mono text-foreground">
+            <Link href="/thanks" className="text-primary hover:underline uppercase tracking-wider">
+              Thanks &amp; data sources
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

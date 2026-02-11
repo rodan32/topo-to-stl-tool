@@ -16,7 +16,7 @@ export default function PlanetSelector({ value, onChange }: PlanetSelectorProps)
         <SelectTrigger className="w-[120px] h-8 text-xs bg-background/50 backdrop-blur border-primary/20">
           <SelectValue placeholder="Select Planet" />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent className="z-[1100]">
           <SelectItem value="earth">Earth</SelectItem>
           <SelectItem value="mars">Mars</SelectItem>
           <SelectItem value="moon">Moon</SelectItem>

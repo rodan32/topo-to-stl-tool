@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import Map, { MapRef } from "@/components/Map";
 import Controls from "@/components/Controls";
+import LandmarkSearch from "@/components/LandmarkSearch";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import * as THREE from "three";
 import { Planet } from "@/components/PlanetSelector";
@@ -266,6 +267,11 @@ export default function Home() {
         />
       </div>
 
+      {/* Search - upper left, just right of zoom controls */}
+      <div className="absolute top-4 left-14 z-[1000] pointer-events-auto">
+        <LandmarkSearch onSelect={handleLandmarkSelect} planet={planet} />
+      </div>
+
       <Controls
         onExport={() => generateModel(false)}
         onPreview={() => generateModel(true)}
@@ -288,7 +294,6 @@ export default function Home() {
         setLithophane={setLithophane}
         invert={invert}
         setInvert={setInvert}
-        onLandmarkSelect={handleLandmarkSelect}
         onStartDrawing={handleStartDrawing}
         onResizeSelection={handleResizeSelection}
         lastElevationSource={lastElevationSource}
