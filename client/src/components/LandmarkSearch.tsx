@@ -18,7 +18,7 @@ import {
 
 interface LandmarkSearchProps {
   onSelect: (lat: number, lng: number, zoom: number) => void;
-  planet: "earth" | "mars" | "moon";
+  planet: "earth" | "mars" | "moon" | "venus";
 }
 
 const PLANETARY_LANDMARKS = {
@@ -35,6 +35,13 @@ const PLANETARY_LANDMARKS = {
     { name: "Apollo 11 Landing Site", lat: 0.67, lng: 23.47, zoom: 10 },
     { name: "South Pole-Aitken Basin", lat: -53.0, lng: 191.0, zoom: 4 },
     { name: "Mare Tranquillitatis", lat: 8.5, lng: 31.4, zoom: 6 }
+  ],
+  venus: [
+    { name: "Maxwell Montes", lat: 65.2, lng: 3.3, zoom: 6 },
+    { name: "Maat Mons", lat: -0.5, lng: 194.5, zoom: 6 },
+    { name: "Ishtar Terra", lat: 70.0, lng: 340.0, zoom: 4 },
+    { name: "Aphrodite Terra", lat: -10.0, lng: 105.0, zoom: 4 },
+    { name: "Lakshmi Planum", lat: 68.0, lng: 339.0, zoom: 5 }
   ],
   earth: [] // Earth uses dynamic geocoding
 };

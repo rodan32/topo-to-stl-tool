@@ -13,7 +13,7 @@ interface TerrainOptions {
   modelWidth: number; // in mm
   resolution: "low" | "medium" | "high" | "ultra";
   shape: "rectangle" | "oval";
-  planet: "earth" | "mars" | "moon";
+  planet: "earth" | "mars" | "moon" | "venus";
   lithophane: boolean;
   invert: boolean;
 }
@@ -407,6 +407,8 @@ export class TerrainGenerator {
          // Using the same carto CDN as before but logging failures explicitly
          if (planet === 'mars') {
              img.src = `https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-mars-basemap-v0-1/all/${z}/${x}/${y}.png`;
+         } else if (planet === 'venus') {
+             img.src = `https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/${z}/${x}/${y}.png`;
          } else {
              img.src = `https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-moon-basemap-v0-1/all/${z}/${x}/${y}.png`;
          }

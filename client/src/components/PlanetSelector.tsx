@@ -1,7 +1,7 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Globe } from "lucide-react";
 
-export type Planet = "earth" | "mars" | "moon";
+export type Planet = "earth" | "mars" | "moon" | "venus";
 
 interface PlanetSelectorProps {
   value: Planet;
@@ -20,6 +20,7 @@ export default function PlanetSelector({ value, onChange }: PlanetSelectorProps)
           <SelectItem value="earth">Earth</SelectItem>
           <SelectItem value="mars">Mars</SelectItem>
           <SelectItem value="moon">Moon</SelectItem>
+          <SelectItem value="venus">Venus</SelectItem>
         </SelectContent>
       </Select>
     </div>

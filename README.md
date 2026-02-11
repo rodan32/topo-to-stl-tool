@@ -176,6 +176,20 @@ pnpm dev
 
 This will start the development server with hot-reload at `http://localhost:3000`
 
+### Moon terrain diagnostic
+
+To evaluate Moon STL generation for well-mapped regions (Apollo 15, Tycho, Copernicus, etc.):
+
+```bash
+# Direct mode (uses TerrainGenerator + geotiff; recommended)
+npx tsx server/terrain.moon-diagnostic.ts
+
+# API mode (uses a running server)
+MOON_DIAG_API_URL=http://localhost:3001 npx tsx server/terrain.moon-diagnostic.ts
+```
+
+Direct mode reports `moonUsedKaguya`, STL size, and vertex Z relief for each region. See `server/terrain.moon-elevation.test.ts` for unit tests of Kaguya STAC and CARTO fallback.
+
 ## License
 
 MIT

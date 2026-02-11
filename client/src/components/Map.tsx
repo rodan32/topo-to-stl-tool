@@ -4,24 +4,34 @@ import "leaflet/dist/leaflet.css";
 import "leaflet-draw/dist/leaflet.draw.css";
 import "leaflet-draw";
 
+// Equirectangular bounds for full-globe imagery (used for Venus, Mercury, etc.)
+const EQUIRECTANGULAR_BOUNDS = L.latLngBounds([[-90, -180], [90, 180]]);
+
 // Define tile layers for each planet
 const TILE_LAYERS = {
   earth: {
-    // Switch to OpenTopoMap for better terrain visualization
+    type: "url" as const,
     url: "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
     attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)',
     maxZoom: 17
   },
   mars: {
-    // ESRI Mars MOLA Elevation
-    url: "https://astro.arcgis.com/arcgis/rest/services/OnMars/MOLAColor/MapServer/tile/{z}/{y}/{x}",
-    attribution: 'NASA/MOLA',
+    type: "url" as const,
+    url: "https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-mars-basemap-v0-2/all/{z}/{x}/{y}.png",
+    attribution: 'NASA/MOLA, CARTO, OpenPlanetary',
     maxZoom: 12
   },
   moon: {
-    // ESRI Moon LOLA Elevation
-    url: "https://astro.arcgis.com/arcgis/rest/services/OnMoon/LRO_LOLA_Color_Global_Mosaic/MapServer/tile/{z}/{y}/{x}",
-    attribution: 'NASA/LRO/LOLA',
+    type: "url" as const,
+    url: "https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-moon-basemap-v0-1/all/{z}/{x}/{y}.png",
+    attribution: 'NASA/LRO/LOLA, CARTO, OpenPlanetary',
+    maxZoom: 12
+  },
+  venus: {
+    type: "image" as const,
+    url: "https://sos.noaa.gov/ftp_mirror/astronomy/venus/topo/2000.jpg",
+    bounds: EQUIRECTANGULAR_BOUNDS,
+    attribution: "Venus: NASA Magellan topography via NOAA Science On a Sphere",
     maxZoom: 12
   }
 };
@@ -35,7 +45,7 @@ export interface MapRef {
 interface MapProps {
   onBoundsChange: (bounds: { north: number; south: number; east: number; west: number } | null) => void;
   className?: string;
-  planet: "earth" | "mars" | "moon";
+  planet: "earth" | "mars" | "moon" | "venus";
   onMapReady?: (map: L.Map) => void;
   /** Current selection bounds; when set, the map shows this shape. When null, selection is cleared. */
   selectionBounds: { north: number; south: number; east: number; west: number } | null;
@@ -76,7 +86,7 @@ function ellipseFromBounds(
 const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, onMapReady, selectionBounds, shape }, ref) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
-  const tileLayerRef = useRef<L.TileLayer | null>(null);
+  const basemapLayerRef = useRef<L.Layer | null>(null);
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
   const drawControlRef = useRef<L.Control.Draw | null>(null);
   const customDrawCleanupRef = useRef<(() => void) | null>(null);
@@ -381,19 +391,23 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
     const config = TILE_LAYERS[planet];
 
     // Remove old layer
-    if (tileLayerRef.current) {
-      map.removeLayer(tileLayerRef.current);
+    if (basemapLayerRef.current) {
+      map.removeLayer(basemapLayerRef.current);
     }
 
-    // Add new layer
-    const newLayer = L.tileLayer(config.url, {
-      attribution: config.attribution,
-      maxZoom: config.maxZoom,
-    });
-    
+    let newLayer: L.Layer;
+    if (config.type === "image") {
+      newLayer = L.imageOverlay(config.url, config.bounds, {
+        attribution: config.attribution,
+      });
+    } else {
+      newLayer = L.tileLayer(config.url, {
+        attribution: config.attribution,
+        maxZoom: config.maxZoom,
+      });
+    }
     newLayer.addTo(map);
-    tileLayerRef.current = newLayer;
-
+    basemapLayerRef.current = newLayer;
   }, [planet, isMapReady]);
 
   // Sync drawn selection to match current bounds and shape (rectangle vs oval)

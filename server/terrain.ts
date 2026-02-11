@@ -13,7 +13,7 @@ interface TerrainOptions {
   modelWidth: number; // in mm
   resolution: "low" | "medium" | "high" | "ultra";
   shape: "rectangle" | "oval";
-  planet: "earth" | "mars" | "moon";
+  planet: "earth" | "mars" | "moon" | "venus";
   lithophane: boolean;
   invert: boolean;
 }
@@ -104,6 +104,225 @@ async function fetchUSGS3DEPElevation(
   }
 }
 
+const USGS_STAC_BASE = "https://stac.astrogeology.usgs.gov/api/collections";
+const PLANET_NODATA = -32767;
+
+/**
+ * Planetary STAC/GeoTIFF config. USGS planetary GeoTIFFs use Simple Cylindrical:
+ * x = lon * (R*π/180), y = lat * (R*π/180) in meters.
+ * Add entries here to enable STAC elevation for more bodies.
+ */
+const PLANET_STAC_CONFIG: Record<
+  string,
+  { collection: string; radiusM: number; label: string }
+> = {
+  moon: {
+    collection: "kaguya_terrain_camera_usgs_dtms",
+    radiusM: 1737400,
+    label: "JAXA Kaguya TC DTMs",
+  },
+  // Mars: STAC (mro_ctx_controlled_usgs_dtms) has limited regional coverage.
+  // Keep Mars on CARTO tiles only for now to avoid breaking existing behavior.
+};
+
+/** Venus: single global GeoTIFF (no STAC), NoData = -32768 */
+const VENUS_MAGELLAN_URL =
+  "https://planetarymaps.usgs.gov/mosaic/Venus_Magellan_Topography_Global_4641m_v02.tif";
+const VENUS_RADIUS_M = 6_051_000;
+
+function boundsToProjectedBbox(
+  bounds: { west: number; south: number; east: number; north: number },
+  radiusM: number
+): [number, number, number, number] {
+  const mPerDeg = (radiusM * Math.PI) / 180;
+  return [
+    bounds.west * mPerDeg,
+    bounds.south * mPerDeg,
+    bounds.east * mPerDeg,
+    bounds.north * mPerDeg,
+  ];
+}
+
+/**
+ * Compute width/height for equirectangular elevation fetch (e.g. Venus GeoTIFF).
+ * Uses physical aspect ratio (lonSpan*cos(lat) : latSpan) so the elevation grid
+ * matches the mesh/model aspect ratio.
+ */
+function equirectangularDimensions(
+  bounds: { north: number; south: number; east: number; west: number },
+  maxDim: number = 2048,
+  /** If set, correct for Mercator so selection aspect matches map display */
+  centerLat?: number
+): { width: number; height: number } {
+  const latSpan = bounds.north - bounds.south;
+  const lonSpan = bounds.east - bounds.west;
+  let aspectRatio = lonSpan / Math.max(latSpan, 0.1);
+  if (centerLat !== undefined) {
+    const cosLat = Math.max(0.01, Math.cos((centerLat * Math.PI) / 180));
+    aspectRatio = (lonSpan * cosLat) / Math.max(latSpan, 0.1);
+  }
+  let w: number;
+  let h: number;
+  if (aspectRatio >= 1) {
+    w = maxDim;
+    h = Math.max(2, Math.round(maxDim / aspectRatio));
+  } else {
+    h = maxDim;
+    w = Math.max(2, Math.round(maxDim * aspectRatio));
+  }
+  return { width: w, height: h };
+}
+
+/**
+ * Fetch elevation from USGS STAC planetary DTMs (Moon, Mars, etc.).
+ * Uses STAC to find DTMs, reads COGs via geotiff.js.
+ * Returns { data, width, height } in meters, or null on failure.
+ */
+async function fetchPlanetaryStacElevation(
+  planet: "moon" | "mars",
+  bounds: { north: number; south: number; east: number; west: number },
+  width: number,
+  height: number
+): Promise<{ data: Float32Array; width: number; height: number } | null> {
+  const config = PLANET_STAC_CONFIG[planet];
+  if (!config) return null;
+
+  const w = Math.min(width, 2048);
+  const h = Math.min(height, 2048);
+  const bbox = `${bounds.west},${bounds.south},${bounds.east},${bounds.north}`;
+  const stacUrl = `${USGS_STAC_BASE}/${config.collection}/items`;
+
+  try {
+    const stacRes = await axios.get<{
+      features?: Array<{
+        assets?: { dtm?: { href?: string } };
+      }>;
+    }>(`${stacUrl}?bbox=${bbox}&limit=15`, { timeout: 15000 });
+
+    const features = stacRes.data?.features ?? [];
+    if (features.length === 0) {
+      console.warn(`No STAC DTMs found for ${planet}, falling back to CARTO tiles.`);
+      return null;
+    }
+
+    const out = new Float32Array(w * h);
+    const count = new Float32Array(w * h);
+    out.fill(NaN);
+    count.fill(0);
+
+    const bboxArr = boundsToProjectedBbox(bounds, config.radiusM);
+
+    for (const feat of features) {
+      const href = feat.assets?.dtm?.href;
+      if (!href) continue;
+
+      try {
+        const { fromUrl } = await import("geotiff");
+        const tiff = await fromUrl(href, { maxRanges: 64 });
+        const rasters = await tiff.readRasters({
+          bbox: bboxArr,
+          width: w,
+          height: h,
+          samples: [0],
+          interleave: false,
+        });
+        const arr = (Array.isArray(rasters) ? rasters[0] : rasters) as
+          | Float32Array
+          | Int16Array
+          | Uint16Array;
+        if (!arr || arr.length !== w * h) continue;
+
+        for (let i = 0; i < arr.length; i++) {
+          const v = arr[i] as number;
+          if (
+            Number.isFinite(v) &&
+            v !== PLANET_NODATA &&
+            v < 1e6 &&
+            v > -1e6
+          ) {
+            const prev = Number.isFinite(out[i]) ? out[i]! : 0;
+            out[i] = prev + v;
+            count[i]++;
+          }
+        }
+      } catch (e) {
+        console.warn(`STAC DTM fetch failed for ${planet}:`, e);
+      }
+    }
+
+    for (let i = 0; i < out.length; i++) {
+      if (count[i] > 0) {
+        out[i] = out[i]! / count[i];
+      } else {
+        out[i] = NaN;
+      }
+    }
+
+    const hasData = count.some((c) => c > 0);
+    if (!hasData) {
+      console.warn(`No valid STAC elevation in bounds for ${planet}, falling back to CARTO tiles.`);
+      return null;
+    }
+
+    console.log(`${planet} elevation from ${config.label} (true elevation)`);
+    return { data: out, width: w, height: h };
+  } catch (err) {
+    console.warn(`STAC fetch failed for ${planet}, falling back to CARTO tiles:`, err);
+    return null;
+  }
+}
+
+/**
+ * Fetch elevation from Venus Magellan global GeoTIFF (no STAC).
+ * Simple Cylindrical projection, same CRS as Moon.
+ */
+async function fetchVenusMagellanElevation(
+  bounds: { north: number; south: number; east: number; west: number },
+  width: number,
+  height: number
+): Promise<{ data: Float32Array; width: number; height: number } | null> {
+  const w = Math.min(width, 2048);
+  const h = Math.min(height, 2048);
+  const bboxArr = boundsToProjectedBbox(bounds, VENUS_RADIUS_M);
+  try {
+    const { fromUrl } = await import("geotiff");
+    const tiff = await fromUrl(VENUS_MAGELLAN_URL, { maxRanges: 64 });
+    const rasters = await tiff.readRasters({
+      bbox: bboxArr,
+      width: w,
+      height: h,
+      samples: [0],
+      interleave: false,
+    });
+    const arr = (Array.isArray(rasters) ? rasters[0] : rasters) as
+      | Float32Array
+      | Int16Array
+      | Uint16Array;
+    if (!arr || arr.length !== w * h) return null;
+
+    const out = new Float32Array(w * h);
+    for (let i = 0; i < arr.length; i++) {
+      const v = arr[i] as number;
+      if (
+        Number.isFinite(v) &&
+        v !== -32768 &&
+        v !== PLANET_NODATA &&
+        v < 1e6 &&
+        v > -1e6
+      ) {
+        out[i] = v;
+      } else {
+        out[i] = NaN;
+      }
+    }
+    console.log("Venus elevation from Magellan Global Topography (true elevation)");
+    return { data: out, width: w, height: h };
+  } catch (err) {
+    console.warn("Venus Magellan fetch failed:", err);
+    return null;
+  }
+}
+
 // Calculate tile coordinates from lat/lon and zoom
 const long2tile = (lon: number, zoom: number) => {
   return Math.floor(((lon + 180) / 360) * Math.pow(2, zoom));
@@ -190,13 +409,15 @@ function createSTLBinary(vertices: number[], indices: number[]): Buffer {
   return buffer;
 }
 
-export type ElevationSource = "usgs3dep" | "terrarium" | "mars" | "moon";
+export type ElevationSource = "usgs3dep" | "terrarium" | "mars" | "moon" | "venus";
 
 export class TerrainGenerator {
   private options: TerrainOptions;
   public fallbackTriggered: boolean = false;
   /** Which elevation data source was used (for UI credit/attribution). */
   public elevationSource: ElevationSource = "terrarium";
+  /** True when Moon used JAXA Kaguya TC DTMs (vs CARTO fallback). */
+  public moonUsedKaguya: boolean = false;
 
   constructor(options: TerrainOptions) {
     this.options = options;
@@ -205,7 +426,9 @@ export class TerrainGenerator {
         ? "mars"
         : options.planet === "moon"
           ? "moon"
-          : "terrarium";
+          : options.planet === "venus"
+            ? "venus"
+            : "terrarium";
   }
 
   private static readonly RESOLUTION_ORDER: TerrainOptions["resolution"][] = [
@@ -332,7 +555,11 @@ export class TerrainGenerator {
 
     const latSpan = bounds.north - bounds.south;
     const lonSpan = bounds.east - bounds.west;
-    const aspectRatio = lonSpan / latSpan;
+    const centerLat = (bounds.north + bounds.south) / 2;
+    // Physical aspect: at latitude φ, 1° lon = 111*cos(φ) km, 1° lat ≈ 111 km.
+    // So width:height = (lonSpan*cos(φ)) : latSpan.
+    const cosLat = Math.max(0.01, Math.cos((centerLat * Math.PI) / 180));
+    const aspectRatio = (lonSpan * cosLat) / Math.max(latSpan, 0.1);
 
     // Ensure at least 2x2 so we always get quads and a valid watertight mesh
     const segmentsX = Math.max(2, Math.min(width, maxSegments));
@@ -346,9 +573,32 @@ export class TerrainGenerator {
 
     // Earth: use Terrarium tiles only. Raw RGB-encoded elevation (meters) — no display-image guesswork.
     // (3DEP PNG export is a rendered image; interpreting it as elevation produced wrong/spiky terrain.)
+    // Moon: prefer JAXA Kaguya TC DTMs (true elevation) over CARTO hillshaded albedo.
+    // Mars: unchanged – CARTO opm-mars-basemap-v0-1 only.
     let usgsElev: Float32Array | null = null;
     let usgsWidth = 0;
     let usgsHeight = 0;
+
+    if (planet === "moon") {
+      const stacElev = await fetchPlanetaryStacElevation(planet, bounds, width, height);
+      if (stacElev) {
+        usgsElev = stacElev.data;
+        usgsWidth = stacElev.width;
+        usgsHeight = stacElev.height;
+        this.moonUsedKaguya = true;
+      }
+    } else if (planet === "venus") {
+      // Venus GeoTIFF is equirectangular; use aspect ratio matching Mercator-corrected model
+      const { width: elevW, height: elevH } = equirectangularDimensions(bounds, 2048, centerLat);
+      const venusElev = await fetchVenusMagellanElevation(bounds, elevW, elevH);
+      if (venusElev) {
+        usgsElev = venusElev.data;
+        usgsWidth = venusElev.width;
+        usgsHeight = venusElev.height;
+      } else {
+        throw new Error("Could not load Venus Magellan elevation data. The service may be unavailable.");
+      }
+    }
 
     const canvas = createCanvas(width, height);
     const ctx = canvas.getContext("2d");
@@ -443,36 +693,44 @@ export class TerrainGenerator {
       );
       // No percentile clamping – use full range so summits (e.g. Timp ~3581 m) aren't cut off
 
-      // Single 3x3 median – removes single-pixel spikes, keeps terrain detail
-      const medianPass = new Float32Array(elevGrid.length);
-      medianPass.set(elevGrid);
-      const win: number[] = [];
-      for (let y = 0; y < segmentsY; y++) {
-        for (let x = 0; x < segmentsX; x++) {
-          const i = y * segmentsX + x;
-          if (!Number.isFinite(elevGrid[i])) continue;
-          win.length = 0;
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-              const nx = x + dx;
-              const ny = y + dy;
-              if (nx >= 0 && nx < segmentsX && ny >= 0 && ny < segmentsY) {
-                const v = elevGrid[ny * segmentsX + nx];
-                if (Number.isFinite(v)) win.push(v);
+      // 3x3 median – removes single-pixel spikes, keeps terrain detail
+      const runMedian = (src: Float32Array, dst: Float32Array, r: number) => {
+        const win: number[] = [];
+        for (let y = 0; y < segmentsY; y++) {
+          for (let x = 0; x < segmentsX; x++) {
+            const i = y * segmentsX + x;
+            if (!Number.isFinite(src[i])) continue;
+            win.length = 0;
+            for (let dy = -r; dy <= r; dy++) {
+              for (let dx = -r; dx <= r; dx++) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (nx >= 0 && nx < segmentsX && ny >= 0 && ny < segmentsY) {
+                  const v = src[ny * segmentsX + nx];
+                  if (Number.isFinite(v)) win.push(v);
+                }
               }
             }
-          }
-          if (win.length > 0) {
-            win.sort((a, b) => a - b);
-            medianPass[i] = win[Math.floor(win.length / 2)];
+            if (win.length > 0) {
+              win.sort((a, b) => a - b);
+              dst[i] = win[Math.floor(win.length / 2)];
+            }
           }
         }
-      }
+      };
+      const medianPass = new Float32Array(elevGrid.length);
+      medianPass.set(elevGrid);
+      runMedian(elevGrid, medianPass, 1);
       for (let i = 0; i < elevGrid.length; i++) elevGrid[i] = medianPass[i];
+      // Moon with CARTO fallback: tiles are hillshaded albedo (shadows = fake spikes). Extra 3x3 helps.
+      // When using Kaguya (usgsElev set), we have real elevation – no extra smoothing.
+      if (planet === "moon" && !usgsElev) {
+        runMedian(elevGrid, medianPass, 1);
+        for (let i = 0; i < elevGrid.length; i++) elevGrid[i] = medianPass[i];
+      }
     }
 
-    const centerLat = (bounds.north + bounds.south) / 2;
-    const metersPerDegreeLon = 111132.954 * Math.cos((centerLat * Math.PI) / 180);
+    const metersPerDegreeLon = 111132.954 * cosLat;
     const realWidthMeters = lonSpan * metersPerDegreeLon;
     let scale = modelWidth / realWidthMeters;
 
@@ -679,6 +937,9 @@ export class TerrainGenerator {
         url = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
       } else if (planet === "mars") {
         url = `https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-mars-basemap-v0-1/all/${z}/${x}/${y}.png`;
+      } else if (planet === "venus") {
+        // Venus: no OPM tiles; use dark placeholder basemap for display coherence
+        url = `https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/${z}/${x}/${y}.png`;
       } else {
         url = `https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-moon-basemap-v0-1/all/${z}/${x}/${y}.png`;
       }

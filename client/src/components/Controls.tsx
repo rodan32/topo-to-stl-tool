@@ -36,7 +36,7 @@ interface ControlsProps {
   setInvert: (val: boolean) => void;
   onStartDrawing: () => void;
   onResizeSelection: () => void;
-  lastElevationSource: "usgs3dep" | "terrarium" | "mars" | "moon" | null;
+  lastElevationSource: "usgs3dep" | "terrarium" | "mars" | "moon" | "venus" | null;
   onSetBoundsFromManual: (bounds: { north: number; south: number; east: number; west: number }) => void;
   onClearSelection: () => void;
 }
@@ -413,10 +413,10 @@ export default function Controls({
       </Card>
 
       {/* Elevation data source & Thanks */}
-      <Card className="glass-panel rounded-none text-card-foreground">
-        <CardContent className="py-3 px-4 space-y-3">
+      <Card className="glass-panel rounded-none">
+        <CardContent className="py-3 px-4 space-y-3 relative z-10">
           {lastElevationSource && (
-            <div className="text-[10px] font-mono text-foreground">
+            <div className="text-[10px] font-mono text-slate-800 dark:text-slate-200">
               <span className="uppercase tracking-wider">Elevation data: </span>
               {lastElevationSource === "usgs3dep" && (
                 <a
@@ -464,9 +464,19 @@ export default function Controls({
                   {" / CARTO"}
                 </>
               )}
+              {lastElevationSource === "venus" && (
+                <a
+                  href="https://planetarymaps.usgs.gov/mosaic/Venus_Magellan_Topography_Global_4641m_v02"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  NASA Magellan Global Topography
+                </a>
+              )}
             </div>
           )}
-          <div className="text-[10px] font-mono text-foreground">
+          <div className="text-[10px] font-mono text-slate-800 dark:text-slate-200">
             <Link href="/thanks" className="text-primary hover:underline uppercase tracking-wider">
               Thanks &amp; data sources
             </Link>

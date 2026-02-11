@@ -9,6 +9,57 @@ import { toast } from "sonner";
 import { X } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 
+/** Per-planet defaults; applied when switching bodies so Earth/Mars/Moon each get correct settings. */
+const PLANET_DEFAULTS: Record<
+  Planet,
+  {
+    exaggeration: number[];
+    baseHeight: number[];
+    modelWidth: number[];
+    resolution: "low" | "medium" | "high" | "ultra";
+    shape: "rectangle" | "oval";
+    mapCenter: { lat: number; lng: number };
+    mapZoom: number;
+  }
+> = {
+  earth: {
+    exaggeration: [1.25],
+    baseHeight: [2],
+    modelWidth: [100],
+    resolution: "medium",
+    shape: "rectangle",
+    mapCenter: { lat: 39, lng: -98 }, // Continental US
+    mapZoom: 4,
+  },
+  mars: {
+    exaggeration: [1.25],
+    baseHeight: [2],
+    modelWidth: [100],
+    resolution: "medium",
+    shape: "rectangle",
+    mapCenter: { lat: 18.65, lng: 226.2 }, // Olympus Mons
+    mapZoom: 6,
+  },
+  moon: {
+    exaggeration: [1.25],
+    baseHeight: [2],
+    modelWidth: [100],
+    resolution: "medium",
+    shape: "rectangle",
+    mapCenter: { lat: 0.67, lng: 23.47 }, // Apollo 11
+    mapZoom: 7,
+  },
+  venus: {
+    exaggeration: [1.25],
+    baseHeight: [2],
+    modelWidth: [100],
+    resolution: "medium",
+    shape: "rectangle",
+    mapCenter: { lat: 65.2, lng: 3.3 }, // Maxwell Montes
+    mapZoom: 5,
+  },
+};
+
 interface Bounds {
   north: number;
   south: number;
@@ -34,7 +85,7 @@ export default function Home() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   /** Last elevation data source used (for attribution). */
   const [lastElevationSource, setLastElevationSource] = useState<
-    "usgs3dep" | "terrarium" | "mars" | "moon" | null
+    "usgs3dep" | "terrarium" | "mars" | "moon" | "venus" | null
   >(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -45,6 +96,27 @@ export default function Home() {
 
   // Map Reference to control view
   const mapRef = useRef<MapRef>(null);
+
+  // When switching bodies, revert to correct settings for the selected planet.
+  const prevPlanetRef = useRef<Planet | null>(null);
+  useEffect(() => {
+    const prev = prevPlanetRef.current;
+    prevPlanetRef.current = planet;
+    if (prev !== null && prev !== planet) {
+      const d = PLANET_DEFAULTS[planet];
+      setExaggeration(d.exaggeration);
+      setBaseHeight(d.baseHeight);
+      setModelWidth(d.modelWidth);
+      setResolution(d.resolution);
+      setShape(d.shape);
+      setSelectionBounds(null);
+      setPreviewUrl(null);
+      setLastElevationSource(null);
+      if (mapRef.current) {
+        mapRef.current.flyTo(d.mapCenter.lat, d.mapCenter.lng, d.mapZoom);
+      }
+    }
+  }, [planet]);
 
   const handleLandmarkSelect = (lat: number, lng: number, zoom: number) => {
     if (mapRef.current) {

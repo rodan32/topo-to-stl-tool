@@ -37,7 +37,7 @@ export const appRouter = router({
           modelWidth: z.number(),
           resolution: z.enum(["low", "medium", "high", "ultra"]),
           shape: z.enum(["rectangle", "oval"]),
-          planet: z.enum(["earth", "mars", "moon"]),
+          planet: z.enum(["earth", "mars", "moon", "venus"]),
           lithophane: z.boolean(),
           invert: z.boolean(),
         })
@@ -51,6 +51,7 @@ export const appRouter = router({
           stl: stlBuffer.toString("base64"),
           fallbackTriggered: generator.fallbackTriggered,
           elevationSource: generator.elevationSource,
+          moonUsedKaguya: generator.moonUsedKaguya,
         };
       }),
   }),

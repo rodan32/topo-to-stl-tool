@@ -9,8 +9,11 @@ This document describes where the app gets its topo/elevation data and how to ve
 | Planet | Source | Notes |
 |--------|--------|--------|
 | **Earth** | [OpenTopoMap](https://opentopomap.org/) | OSM + SRTM–derived styling; display only. |
-| **Mars** | ESRI OnMars MOLA Color | ArcGIS tile service. |
-| **Moon** | ESRI OnMoon LRO LOLA Color | ArcGIS tile service. |
+| **Mars** | CARTO OPM Mars basemap | Tiled imagery. |
+| **Moon** | CARTO OPM Moon basemap | Tiled imagery. |
+| **Venus** | [NOAA SOS Venus Topography](https://sos.noaa.gov/catalog/datasets/venus-topography/) | Single equirectangular image overlay (`2000.jpg`). |
+
+**Image-overlay pattern:** Planets without tiled imagery (Venus, future Mercury, Ceres, Vesta, Titan) use `L.imageOverlay` with a full-globe equirectangular image. Add entries to `TILE_LAYERS` in `client/src/components/Map.tsx` with `type: "image"`, `url`, and `bounds: EQUIRECTANGULAR_BOUNDS`.
 
 ### Elevation for STL generation (height values)
 
@@ -19,6 +22,7 @@ This document describes where the app gets its topo/elevation data and how to ve
 | **Earth** | **AWS Terrarium** | RGB-encoded PNG tiles | Used for all Earth areas. Raw elevation in meters: `(R*256 + G + B/256) - 32768`. SRTM and other DEMs; no display-image interpretation. |
 | **Mars** | CARTO OPM Mars basemap | Grayscale-style tiles | Approximate elevation from color. |
 | **Moon** | CARTO OPM Moon basemap | Grayscale-style tiles | Approximate elevation from color. |
+| **Venus** | USGS Magellan GeoTIFF | Global GeoTIFF | Direct fetch from planetarymaps.usgs.gov; radar altimetry. |
 
 **Earth elevation in code** (`server/terrain.ts`):
 

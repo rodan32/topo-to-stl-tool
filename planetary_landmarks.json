@@ -1,16 +1,1 @@
-{
-  "mars": [
-    { "name": "Olympus Mons", "lat": 18.65, "lng": 226.2, "zoom": 6 },
-    { "name": "Valles Marineris", "lat": -10.0, "lng": 287.0, "zoom": 5 },
-    { "name": "Gale Crater (Curiosity)", "lat": -5.4, "lng": 137.8, "zoom": 9 },
-    { "name": "Jezero Crater (Perseverance)", "lat": 18.4, "lng": 77.5, "zoom": 10 },
-    { "name": "Tharsis Montes", "lat": 0.0, "lng": 255.0, "zoom": 5 }
-  ],
-  "moon": [
-    { "name": "Tycho Crater", "lat": -43.3, "lng": -11.2, "zoom": 8 },
-    { "name": "Copernicus Crater", "lat": 9.6, "lng": -20.0, "zoom": 8 },
-    { "name": "Apollo 11 Landing Site", "lat": 0.67, "lng": 23.47, "zoom": 10 },
-    { "name": "South Pole-Aitken Basin", "lat": -53.0, "lng": 191.0, "zoom": 4 },
-    { "name": "Mare Tranquillitatis", "lat": 8.5, "lng": 31.4, "zoom": 6 }
-  ]
-}
+{"mars":[{"name":"Olympus Mons","lat":18.65,"lng":226.2,"zoom":6},{"name":"Valles Marineris","lat":-10,"lng":287,"zoom":5},{"name":"Gale Crater (Curiosity)","lat":-5.4,"lng":137.8,"zoom":9},{"name":"Jezero Crater (Perseverance)","lat":18.4,"lng":77.5,"zoom":10},{"name":"Tharsis Montes","lat":0,"lng":255,"zoom":5}],"moon":[{"name":"Tycho Crater","lat":-43.3,"lng":-11.2,"zoom":8},{"name":"Copernicus Crater","lat":9.6,"lng":-20,"zoom":8},{"name":"Apollo 11 Landing Site","lat":0.67,"lng":23.47,"zoom":10},{"name":"South Pole-Aitken Basin","lat":-53,"lng":191,"zoom":4},{"name":"Mare Tranquillitatis","lat":8.5,"lng":31.4,"zoom":6}],"venus":[{"name":"Maxwell Montes","lat":65.2,"lng":3.3,"zoom":6},{"name":"Maat Mons","lat":-0.5,"lng":194.5,"zoom":6},{"name":"Ishtar Terra","lat":70,"lng":340,"zoom":4},{"name":"Aphrodite Terra","lat":-10,"lng":105,"zoom":4},{"name":"Lakshmi Planum","lat":68,"lng":339,"zoom":5}]}
