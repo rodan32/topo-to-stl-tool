@@ -85,7 +85,7 @@ export default function Home() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   /** Last elevation data source used (for attribution). */
   const [lastElevationSource, setLastElevationSource] = useState<
-    "usgs3dep" | "terrarium" | "mars" | "moon" | "venus" | null
+    "usgs3dep" | "terrarium" | "open-elevation" | "mars" | "moon" | "venus" | null
   >(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);

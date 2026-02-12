@@ -64,4 +64,53 @@ describe("Earth elevation (AWS Terrarium) integration", () => {
     expect(maxElev).toBeLessThanOrEqual(10000);
     expect(maxElev - minElev).toBeGreaterThan(0);
   }, 15000);
+
+  it("fetches Open-Elevation fallback for K2 region when needed", async () => {
+    const { TerrainGenerator } = await import("./terrain");
+    const bounds = { north: 36.2, south: 35.5, east: 77.0, west: 76.2 }; // K2 region
+    const gen = new TerrainGenerator({
+      bounds,
+      exaggeration: 1.5,
+      baseHeight: 2,
+      modelWidth: 100,
+      resolution: "low",
+      shape: "rectangle",
+      planet: "earth",
+      lithophane: false,
+      invert: false,
+    });
+    const stl = await gen.generate();
+    expect(stl.length).toBeGreaterThan(1000);
+    expect(gen.elevationSource).toBeDefined();
+    expect(["terrarium", "open-elevation"]).toContain(gen.elevationSource);
+  }, 60000);
+
+  const SPOT_REGIONS: Array<{ name: string; bounds: { north: number; south: number; east: number; west: number } }> = [
+    { name: "South America (Andes)", bounds: { north: -32.5, south: -33.2, east: -69.8, west: -70.5 } }, // Aconcagua
+    { name: "Africa (Kilimanjaro)", bounds: { north: -3.0, south: -3.6, east: 37.3, west: 36.8 } },
+    { name: "Indian Ocean (ocean)", bounds: { north: -15, south: -18, east: 75, west: 72 } },
+    { name: "Australia (Great Dividing Range)", bounds: { north: -33.8, south: -34.5, east: 150.2, west: 149.5 } },
+    { name: "Europe (Alps)", bounds: { north: 45.9, south: 45.3, east: 7.0, west: 6.2 } }, // Mont Blanc region
+  ];
+
+  for (const region of SPOT_REGIONS) {
+    it(`generates terrain for ${region.name}`, async () => {
+      const { TerrainGenerator } = await import("./terrain");
+      const gen = new TerrainGenerator({
+        bounds: region.bounds,
+        exaggeration: 1.5,
+        baseHeight: 2,
+        modelWidth: 100,
+        resolution: "low",
+        shape: "rectangle",
+        planet: "earth",
+        lithophane: false,
+        invert: false,
+      });
+      const stl = await gen.generate();
+      expect(stl.length).toBeGreaterThan(1000);
+      expect(gen.elevationSource).toBeDefined();
+      expect(["terrarium", "open-elevation"]).toContain(gen.elevationSource);
+    }, 60000);
+  }
 });

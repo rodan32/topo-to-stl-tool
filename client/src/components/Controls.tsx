@@ -36,7 +36,7 @@ interface ControlsProps {
   setInvert: (val: boolean) => void;
   onStartDrawing: () => void;
   onResizeSelection: () => void;
-  lastElevationSource: "usgs3dep" | "terrarium" | "mars" | "moon" | "venus" | null;
+  lastElevationSource: "usgs3dep" | "terrarium" | "open-elevation" | "mars" | "moon" | "venus" | null;
   onSetBoundsFromManual: (bounds: { north: number; south: number; east: number; west: number }) => void;
   onClearSelection: () => void;
 }
@@ -436,6 +436,16 @@ export default function Controls({
                   className="text-primary hover:underline"
                 >
                   AWS Terrarium
+                </a>
+              )}
+              {lastElevationSource === "open-elevation" && (
+                <a
+                  href="https://api.open-elevation.com/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:underline"
+                >
+                  Open-Elevation
                 </a>
               )}
               {lastElevationSource === "mars" && (

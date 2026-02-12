@@ -19,8 +19,11 @@ interface TerrainOptions {
 }
 
 // AWS Terrarium encoding: (r * 256 + g + b / 256) - 32768
-const decodeElevationEarth = (r: number, g: number, b: number): number => {
-  return r * 256 + g + b / 256 - 32768;
+// -32768 is the standard no-data value; treat as null.
+const TERRARIUM_NODATA = -32768;
+const decodeElevationEarth = (r: number, g: number, b: number): number | null => {
+  const v = r * 256 + g + b / 256 - 32768;
+  return v === TERRARIUM_NODATA ? null : v;
 };
 
 // Simple grayscale decoding for Moon/Mars
@@ -104,8 +107,69 @@ async function fetchUSGS3DEPElevation(
   }
 }
 
+const OPEN_ELEVATION_API = "https://api.open-elevation.com/api/v1/lookup";
+
 const USGS_STAC_BASE = "https://stac.astrogeology.usgs.gov/api/collections";
 const PLANET_NODATA = -32767;
+
+/**
+ * Fallback for Earth when Terrarium tiles return no data (e.g. regions outside coverage).
+ * Uses Open-Elevation API - free, global. Batch limit ~100 locations/request.
+ */
+async function fetchEarthElevationFallback(
+  bounds: { north: number; south: number; east: number; west: number },
+  segmentsX: number,
+  segmentsY: number,
+  shape: "rectangle" | "oval"
+): Promise<Float32Array | null> {
+  const BATCH_SIZE = 100;
+  const locations: { lat: number; lng: number; idx: number }[] = [];
+
+  for (let y = 0; y < segmentsY; y++) {
+    for (let x = 0; x < segmentsX; x++) {
+      if (shape === "oval") {
+        const cx = (segmentsX - 1) / 2;
+        const cy = (segmentsY - 1) / 2;
+        const dx = (x - cx) / (cx || 1);
+        const dy = (y - cy) / (cy || 1);
+        if (dx * dx + dy * dy > 1.0) continue;
+      }
+      const lat = bounds.south + (y / Math.max(1, segmentsY - 1)) * (bounds.north - bounds.south);
+      const lng = bounds.west + (x / Math.max(1, segmentsX - 1)) * (bounds.east - bounds.west);
+      locations.push({ lat, lng, idx: y * segmentsX + x });
+    }
+  }
+
+  const out = new Float32Array(segmentsX * segmentsY);
+  out.fill(NaN);
+
+  for (let i = 0; i < locations.length; i += BATCH_SIZE) {
+    const batch = locations.slice(i, i + BATCH_SIZE);
+    const locStr = batch.map((p) => `${p.lat},${p.lng}`).join("|");
+    try {
+      const res = await axios.get<{ results?: Array<{ latitude: number; longitude: number; elevation: number }> }>(
+        `${OPEN_ELEVATION_API}?locations=${encodeURIComponent(locStr)}`,
+        { timeout: 15000 }
+      );
+      const results = res.data?.results ?? [];
+      for (let j = 0; j < batch.length && j < results.length; j++) {
+        const e = results[j];
+        if (e && Number.isFinite(e.elevation)) {
+          out[batch[j].idx] = e.elevation;
+        }
+      }
+      if (i + BATCH_SIZE < locations.length) {
+        await new Promise((r) => setTimeout(r, 200)); // polite rate limit
+      }
+    } catch (err) {
+      console.warn("Open-Elevation fallback batch failed:", err);
+      return null;
+    }
+  }
+
+  const hasData = out.some((v) => Number.isFinite(v));
+  return hasData ? out : null;
+}
 
 /**
  * Planetary STAC/GeoTIFF config. USGS planetary GeoTIFFs use Simple Cylindrical:
@@ -409,7 +473,7 @@ function createSTLBinary(vertices: number[], indices: number[]): Buffer {
   return buffer;
 }
 
-export type ElevationSource = "usgs3dep" | "terrarium" | "mars" | "moon" | "venus";
+export type ElevationSource = "usgs3dep" | "terrarium" | "open-elevation" | "mars" | "moon" | "venus";
 
 export class TerrainGenerator {
   private options: TerrainOptions;
@@ -675,6 +739,23 @@ export class TerrainGenerator {
           elevGrid[i] = elev;
           validElevs.push(elev);
         }
+      }
+    }
+
+    // Earth fallback: Terrarium can have gaps or fail in some deployments. Use Open-Elevation when no/few data.
+    const minValidForConfidence = Math.max(10, Math.floor(segmentsX * segmentsY * 0.02));
+    if (validElevs.length < minValidForConfidence && planet === "earth") {
+      const fallback = await fetchEarthElevationFallback(bounds, segmentsX, segmentsY, shape);
+      if (fallback) {
+        validElevs.length = 0;
+        for (let i = 0; i < fallback.length; i++) {
+          if (Number.isFinite(fallback[i])) {
+            elevGrid[i] = fallback[i];
+            validElevs.push(fallback[i]);
+          }
+        }
+        console.log(`Earth elevation from Open-Elevation fallback (${validElevs.length} points)`);
+        this.elevationSource = "open-elevation";
       }
     }
 
@@ -944,8 +1025,24 @@ export class TerrainGenerator {
         url = `https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-moon-basemap-v0-1/all/${z}/${x}/${y}.png`;
       }
 
-      const response = await axios.get(url, { responseType: "arraybuffer" });
-      const img = await loadImage(Buffer.from(response.data));
+      const fetchTile = async (): Promise<Buffer> => {
+        const response = await axios.get(url, {
+          responseType: "arraybuffer",
+          timeout: 15000,
+          validateStatus: (s) => s === 200,
+        });
+        return Buffer.isBuffer(response.data)
+          ? response.data
+          : Buffer.from(response.data as ArrayBuffer);
+      };
+      let buf: Buffer;
+      try {
+        buf = await fetchTile();
+      } catch (err) {
+        await new Promise((r) => setTimeout(r, 500));
+        buf = await fetchTile();
+      }
+      const img = await loadImage(buf);
       ctx.drawImage(img, offsetX * 256, offsetY * 256);
     } catch (error) {
       console.warn(`Failed to load tile ${z}/${x}/${y} for ${planet}.`, error);

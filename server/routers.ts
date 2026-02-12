@@ -42,7 +42,9 @@ export const appRouter = router({
           invert: z.boolean(),
         })
       )
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        ctx.res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+        ctx.res.setHeader("Pragma", "no-cache");
         const { TerrainGenerator } = await import("./terrain");
         const generator = new TerrainGenerator(input);
         const stlBuffer = await generator.generate();

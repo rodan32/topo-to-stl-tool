@@ -20,3 +20,12 @@ JAXA DARTS: https://darts.isas.jaxa.jp/en/missions/kaguya Specifically for the S
 For FUN:
 
 Middle-earth (Lord of the Rings): There is a dedicated project called Middle-earth GIS (and Arda GIS) where fans have created actual coordinate systems and heightmaps for Tolkien’s world. You can find these shared as .tif or .png heightmaps on GitHub or specialized modding forums.
+
+Future Features: 
+
+- auto-select z-exaggeration for planets with less dynamic features
+- Add elevation data for Earth regions outside of the USA
+- Moon - shaded areas on the map to show where good elevation data is available?
+- Moon - merged or "best available" generation for selected regions where high-detail data is incomplete
+- Venus - align map image with elevation data; map currently doesn't match STL. Idea: generate shaded relief from elevation data programmatically (once, then cache) so basemap matches what we sample.
+- Figure out mercator projection issues
