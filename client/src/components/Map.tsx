@@ -7,6 +7,34 @@ import "leaflet-draw";
 // Equirectangular bounds for full-globe imagery (used for Venus, Mercury, etc.)
 const EQUIRECTANGULAR_BOUNDS = L.latLngBounds([[-90, -180], [90, 180]]);
 
+/** Earth elevation coverage: Terrarium ≈ 85°N to 85°S. Polar caps = no data. 60–85° = lower quality (SRTM gaps). */
+const EARTH_COVERAGE = {
+  minZoom: 4,
+  noDataStyle: { fillColor: "#4a4a4a", fillOpacity: 0.5, color: "transparent", weight: 0 },
+  lowDataStyle: { fillColor: "#6a6a6a", fillOpacity: 0.2, color: "transparent", weight: 0 },
+};
+
+function createEarthCoverageOverlay(): L.LayerGroup {
+  return L.layerGroup([
+    L.polygon(
+      [[85, -180], [85, 180], [90, 180], [90, -180]],
+      EARTH_COVERAGE.noDataStyle
+    ),
+    L.polygon(
+      [[-90, -180], [-90, 180], [-85, 180], [-85, -180]],
+      EARTH_COVERAGE.noDataStyle
+    ),
+    L.polygon(
+      [[60, -180], [60, 180], [85, 180], [85, -180]],
+      EARTH_COVERAGE.lowDataStyle
+    ),
+    L.polygon(
+      [[-85, -180], [-85, 180], [-60, 180], [-60, -180]],
+      EARTH_COVERAGE.lowDataStyle
+    ),
+  ]);
+}
+
 // Define tile layers for each planet
 const TILE_LAYERS = {
   earth: {
@@ -87,6 +115,7 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const basemapLayerRef = useRef<L.Layer | null>(null);
+  const coverageOverlayRef = useRef<L.LayerGroup | null>(null);
   const drawnItemsRef = useRef<L.FeatureGroup | null>(null);
   const drawControlRef = useRef<L.Control.Draw | null>(null);
   const customDrawCleanupRef = useRef<(() => void) | null>(null);
@@ -408,6 +437,44 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
     }
     newLayer.addTo(map);
     basemapLayerRef.current = newLayer;
+  }, [planet, isMapReady]);
+
+  // Earth coverage overlay: grayscale for no/low-data regions, visible when zoomed in
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !isMapReady || planet !== "earth") {
+      if (coverageOverlayRef.current) {
+        map?.removeLayer(coverageOverlayRef.current);
+        coverageOverlayRef.current = null;
+      }
+      return;
+    }
+
+    const updateOverlay = () => {
+      const zoom = map.getZoom();
+      const shouldShow = zoom >= EARTH_COVERAGE.minZoom;
+
+      if (shouldShow && !coverageOverlayRef.current) {
+        const group = createEarthCoverageOverlay();
+        group.addTo(map);
+        group.setZIndex(300); // Above tiles, below drawn selection
+        coverageOverlayRef.current = group;
+      } else if (!shouldShow && coverageOverlayRef.current) {
+        map.removeLayer(coverageOverlayRef.current);
+        coverageOverlayRef.current = null;
+      }
+    };
+
+    updateOverlay();
+    map.on("zoomend", updateOverlay);
+
+    return () => {
+      map.off("zoomend", updateOverlay);
+      if (coverageOverlayRef.current) {
+        map.removeLayer(coverageOverlayRef.current);
+        coverageOverlayRef.current = null;
+      }
+    };
   }, [planet, isMapReady]);
 
   // Sync drawn selection to match current bounds and shape (rectangle vs oval)

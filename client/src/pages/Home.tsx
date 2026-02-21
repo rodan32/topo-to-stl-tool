@@ -192,9 +192,21 @@ export default function Home() {
         URL.revokeObjectURL(url);
         toast.success("Download started!");
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Generation failed:", error);
-      toast.error("Couldn't generate a model for this area.");
+      const isTimeout =
+        typeof error === "object" &&
+        error !== null &&
+        "message" in error &&
+        typeof (error as { message?: string }).message === "string" &&
+        ((error as { message: string }).message.includes("Unexpected token '<'") ||
+          (error as { message: string }).message.includes("504") ||
+          (error as { message: string }).message.includes("Gateway Timeout"));
+      toast.error(
+        isTimeout
+          ? "Request timed out. We're working on faster generation for large areas."
+          : "Couldn't generate a model for this area."
+      );
     } finally {
       setIsProcessing(false);
     }

@@ -124,6 +124,11 @@ pm2 startup
 
 ## Troubleshooting
 
+### 504 Gateway Timeout / "Unexpected token '<'" on terrain generation
+The app auto-reduces quality for large areas to stay within timeouts. If 504s persist:
+- **Cloudflare / CDN**: Increase timeout (e.g. 100s+)
+- **Nginx**: Ensure `proxy_read_timeout 300s` (see `deploy/topo-zarchstuff.nginx.conf`)
+
 ### Service won't start
 - Check logs: `sudo journalctl -u topo-to-stl -n 50`
 - Verify Node.js version: `node --version` (needs 20.11+)

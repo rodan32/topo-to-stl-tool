@@ -1,6 +1,26 @@
 import { createCanvas, loadImage } from "canvas";
 import axios from "axios";
 
+/** Normalize longitude to [-180, 180]. Leaflet/UI can send values outside this range. */
+function normalizeLon(lon: number): number {
+  return ((lon + 540) % 360) - 180;
+}
+
+/** Normalize bounds so east/west are in [-180, 180]. Fixes tile math when longitudes are e.g. -231° (= 129° E). */
+function normalizeBounds(bounds: {
+  north: number;
+  south: number;
+  east: number;
+  west: number;
+}): { north: number; south: number; east: number; west: number } {
+  return {
+    north: bounds.north,
+    south: bounds.south,
+    east: normalizeLon(bounds.east),
+    west: normalizeLon(bounds.west),
+  };
+}
+
 interface TerrainOptions {
   bounds: {
     north: number;
@@ -484,7 +504,10 @@ export class TerrainGenerator {
   public moonUsedKaguya: boolean = false;
 
   constructor(options: TerrainOptions) {
-    this.options = options;
+    this.options = {
+      ...options,
+      bounds: normalizeBounds(options.bounds),
+    };
     this.elevationSource =
       options.planet === "mars"
         ? "mars"
@@ -515,20 +538,41 @@ export class TerrainGenerator {
   }
 
   /**
-   * Build list of (zoom, maxSegments) to try: start with requested resolution,
-   * then progressively lower resolution and zoom so we deliver an STL when possible.
+   * Estimate tile count at zoom for the current bounds.
+   */
+  private estimateTileCount(zoom: number): number {
+    const { bounds } = this.options;
+    const xMin = long2tile(bounds.west, zoom);
+    const xMax = long2tile(bounds.east, zoom);
+    const yMin = lat2tile(bounds.north, zoom);
+    const yMax = lat2tile(bounds.south, zoom);
+    return (xMax - xMin + 1) * (yMax - yMin + 1);
+  }
+
+  /**
+   * Build list of (zoom, maxSegments) to try. For large areas, start with
+   * lower resolution so we complete within typical proxy timeouts (~60s).
+   * User gets their STL; we auto-reduce quality rather than failing.
    */
   private getFallbackAttempts(): { zoom: number; maxSegments: number }[] {
     const res = this.options.resolution;
     const idx = TerrainGenerator.RESOLUTION_ORDER.indexOf(res);
-    const attempts: { zoom: number; maxSegments: number }[] = [];
+    const startZoom = TerrainGenerator.ZOOM_BY_RES[res];
     const MIN_ZOOM = 5;
-    for (let r = idx; r >= 0; r--) {
+
+    // Large areas: start one resolution step lower so first attempt completes within timeout
+    const tileCountAtRequested = this.estimateTileCount(startZoom);
+    const LARGE_AREA_TILES = 20;
+    const startResolutionIdx =
+      tileCountAtRequested > LARGE_AREA_TILES ? Math.min(idx + 1, 3) : idx;
+
+    const attempts: { zoom: number; maxSegments: number }[] = [];
+    for (let r = startResolutionIdx; r >= 0; r--) {
       const resolution = TerrainGenerator.RESOLUTION_ORDER[r];
       const maxSegments = TerrainGenerator.SEGMENTS_BY_RES[resolution];
-      const startZoom = TerrainGenerator.ZOOM_BY_RES[resolution];
-      for (let z = startZoom; z >= MIN_ZOOM; z--) {
-        attempts.push({ zoom: z, maxSegments });
+      const z = TerrainGenerator.ZOOM_BY_RES[resolution];
+      for (let zoom = z; zoom >= MIN_ZOOM; zoom--) {
+        attempts.push({ zoom, maxSegments });
       }
     }
     return attempts;
@@ -621,7 +665,7 @@ export class TerrainGenerator {
     const lonSpan = bounds.east - bounds.west;
     const centerLat = (bounds.north + bounds.south) / 2;
     // Physical aspect: at latitude φ, 1° lon = 111*cos(φ) km, 1° lat ≈ 111 km.
-    // So width:height = (lonSpan*cos(φ)) : latSpan.
+    // So width:height = (lonSpan*cos(φ)) : latSpan. Keeps landmarks true to real geography.
     const cosLat = Math.max(0.01, Math.cos((centerLat * Math.PI) / 180));
     const aspectRatio = (lonSpan * cosLat) / Math.max(latSpan, 0.1);
 
@@ -742,9 +786,8 @@ export class TerrainGenerator {
       }
     }
 
-    // Earth fallback: Terrarium can have gaps or fail in some deployments. Use Open-Elevation when no/few data.
-    const minValidForConfidence = Math.max(10, Math.floor(segmentsX * segmentsY * 0.02));
-    if (validElevs.length < minValidForConfidence && planet === "earth") {
+    // Earth fallback: when Terrarium tiles fail or return no data (e.g. 404 in some deployments)
+    if (validElevs.length === 0 && planet === "earth") {
       const fallback = await fetchEarthElevationFallback(bounds, segmentsX, segmentsY, shape);
       if (fallback) {
         validElevs.length = 0;
@@ -1015,37 +1058,28 @@ export class TerrainGenerator {
       let url = "";
 
       if (planet === "earth") {
-        url = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
+        // Virtual-hosted S3 URL – avoids 404s that path-style can hit in some environments
+        url = `https://elevation-tiles-prod.s3.amazonaws.com/terrarium/${z}/${x}/${y}.png`;
       } else if (planet === "mars") {
         url = `https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-mars-basemap-v0-1/all/${z}/${x}/${y}.png`;
       } else if (planet === "venus") {
-        // Venus: no OPM tiles; use dark placeholder basemap for display coherence
         url = `https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/${z}/${x}/${y}.png`;
       } else {
         url = `https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-moon-basemap-v0-1/all/${z}/${x}/${y}.png`;
       }
 
-      const fetchTile = async (): Promise<Buffer> => {
-        const response = await axios.get(url, {
-          responseType: "arraybuffer",
-          timeout: 15000,
-          validateStatus: (s) => s === 200,
-        });
-        return Buffer.isBuffer(response.data)
-          ? response.data
-          : Buffer.from(response.data as ArrayBuffer);
-      };
-      let buf: Buffer;
-      try {
-        buf = await fetchTile();
-      } catch (err) {
-        await new Promise((r) => setTimeout(r, 500));
-        buf = await fetchTile();
-      }
-      const img = await loadImage(buf);
+      const response = await axios.get(url, { responseType: "arraybuffer" });
+      const img = await loadImage(
+        Buffer.isBuffer(response.data) ? response.data : Buffer.from(response.data as ArrayBuffer)
+      );
       ctx.drawImage(img, offsetX * 256, offsetY * 256);
-    } catch (error) {
-      console.warn(`Failed to load tile ${z}/${x}/${y} for ${planet}.`, error);
+    } catch (error: unknown) {
+      const status = error && typeof error === "object" && "response" in error
+        ? (error as { response?: { status?: number } }).response?.status
+        : null;
+      console.warn(
+        `Failed to load tile ${z}/${x}/${y} for ${planet}${status ? ` (HTTP ${status})` : ""}${url ? ` – ${url}` : ""}`
+      );
       // Continue without this tile
     }
   }

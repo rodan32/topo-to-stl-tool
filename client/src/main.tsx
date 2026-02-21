@@ -33,7 +33,12 @@ queryClient.getMutationCache().subscribe(event => {
   if (event.type === "updated" && event.action.type === "error") {
     const error = event.mutation.state.error;
     redirectToLoginIfUnauthorized(error);
-    console.error("[API Mutation Error]", error);
+    const isTimeout =
+      error instanceof Error &&
+      (error.message.includes("timed out") ||
+        error.message.includes("504") ||
+        error.message.includes("Unexpected token '<'"));
+    if (!isTimeout) console.error("[API Mutation Error]", error);
   }
 });
 
@@ -46,6 +51,14 @@ const trpcClient = trpc.createClient({
         return globalThis.fetch(input, {
           ...(init ?? {}),
           credentials: "include",
+        }).then(async (res) => {
+          if (res.status === 504 || res.status === 502 || res.status === 503) {
+            await res.text();
+            throw new Error(
+              `Request timed out (${res.status}). Try a smaller area or lower resolution.`
+            );
+          }
+          return res;
         });
       },
     }),

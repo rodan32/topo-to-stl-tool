@@ -65,6 +65,18 @@ describe("Earth elevation (AWS Terrarium) integration", () => {
     expect(maxElev - minElev).toBeGreaterThan(0);
   }, 15000);
 
+  it("Open-Elevation API returns valid elevation for K2", async () => {
+    const url = "https://api.open-elevation.com/api/v1/lookup?locations=35.88,76.51|36,77";
+    const res = await axios.get<{ results?: Array<{ elevation: number; latitude: number; longitude: number }> }>(url);
+    expect(res.status).toBe(200);
+    const results = res.data?.results ?? [];
+    expect(results.length).toBeGreaterThanOrEqual(2);
+    const k2 = results.find((r) => Math.abs(r.latitude - 35.88) < 0.01 && Math.abs(r.longitude - 76.51) < 0.01);
+    expect(k2).toBeDefined();
+    expect(k2!.elevation).toBeGreaterThan(4000);
+    expect(k2!.elevation).toBeLessThan(10000);
+  }, 10000);
+
   it("fetches Open-Elevation fallback for K2 region when needed", async () => {
     const { TerrainGenerator } = await import("./terrain");
     const bounds = { north: 36.2, south: 35.5, east: 77.0, west: 76.2 }; // K2 region

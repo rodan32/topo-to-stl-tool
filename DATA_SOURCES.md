@@ -26,7 +26,7 @@ This document describes where the app gets its topo/elevation data and how to ve
 
 **Earth elevation in code** (`server/terrain.ts`):
 
-- **AWS Terrarium** (primary, global): `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png`, decode `(R*256 + G + B/256) - 32768` (meters). Same encoding as Mapbox Terrain-RGB; one tile = one elevation value per pixel.
+- **AWS Terrarium** (primary, global): `https://elevation-tiles-prod.s3.amazonaws.com/terrarium/{z}/{x}/{y}.png` (virtual-hosted S3 URL; path-style can return 404 in some deployments). Decode `(R*256 + G + B/256) - 32768` (meters). Filter -32768 as no-data.
 - **Open-Elevation** (fallback): When Terrarium returns no data (e.g. tiles fail, gaps), we use `https://api.open-elevation.com/api/v1/lookup` to sample a grid. Free, global. Rate limits apply for heavy use.
 - **USGS 3DEP**: Not used for STL. The 3DEP ImageServer `exportImage` returns a **display** PNG (8‑bit stretched for visualization). Raw 3DEP (e.g. WCS GetCoverage) could be added later for US if needed.
 
