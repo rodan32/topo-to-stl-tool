@@ -38,6 +38,18 @@ const lat2tile = (lat: number, zoom: number) => {
   return (Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom)));
 };
 
+/** Convert lon/lat to pixel coordinates within a tile canvas covering [xMin..xMax] x [yMin..yMax]. */
+function lonToPixel(lon: number, zoom: number, xMin: number): number {
+  const n = Math.pow(2, zoom);
+  return ((lon + 180) / 360) * n * 256 - xMin * 256;
+}
+function latToPixel(lat: number, zoom: number, yMin: number): number {
+  const latRad = (lat * Math.PI) / 180;
+  const n = Math.pow(2, zoom);
+  const tileY = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
+  return (tileY - yMin) * 256;
+}
+
 export class TerrainGenerator {
   private options: TerrainOptions;
   public fallbackTriggered: boolean = false;
@@ -122,7 +134,10 @@ export class TerrainGenerator {
 
     const latSpan = bounds.north - bounds.south;
     const lonSpan = bounds.east - bounds.west;
-    const aspectRatio = lonSpan / latSpan;
+    const centerLat = (bounds.north + bounds.south) / 2;
+    const cosLat = Math.max(0.01, Math.cos((centerLat * Math.PI) / 180));
+    // Physical aspect (lonSpan*cos(lat) : latSpan) so landmarks match real geography at high latitudes
+    const aspectRatio = (lonSpan * cosLat) / Math.max(latSpan, 0.1);
 
     // Dynamic resolution based on "ultra" setting
     // Low: 128, Med: 256, High: 512, Ultra: up to 2048 (or width if smaller)
@@ -145,9 +160,15 @@ export class TerrainGenerator {
     const indices: number[] = [];
 
     const getElevation = (col: number, row: number) => {
-      const imgX = Math.floor((col / (segmentsX - 1)) * (width - 1));
-      const imgY = Math.floor((row / (segmentsY - 1)) * (height - 1));
-      
+      // Map mesh (col,row) to geographic bounds, then to tile pixel coords.
+      // Ensures the model centers on the selected bounds, not the full tile grid.
+      const lon = bounds.west + (col / Math.max(1, segmentsX - 1)) * (bounds.east - bounds.west);
+      const lat = bounds.north - (row / Math.max(1, segmentsY - 1)) * (bounds.north - bounds.south);
+      const px = lonToPixel(lon, zoom, xMin);
+      const py = latToPixel(lat, zoom, yMin);
+      const imgX = Math.max(0, Math.min(width - 1, Math.floor(px)));
+      const imgY = Math.max(0, Math.min(height - 1, Math.floor(py)));
+
       const index = (imgY * width + imgX) * 4;
       if (index < 0 || index >= data.length) return 0;
 
@@ -199,8 +220,7 @@ export class TerrainGenerator {
     
     console.log(`Elevation Range: ${minElev} to ${maxElev}`);
 
-    const centerLat = (bounds.north + bounds.south) / 2;
-    const metersPerDegreeLon = 111132.954 * Math.cos(centerLat * Math.PI / 180);
+    const metersPerDegreeLon = 111132.954 * cosLat;
     const realWidthMeters = lonSpan * metersPerDegreeLon;
     let scale = modelWidth / realWidthMeters; 
 

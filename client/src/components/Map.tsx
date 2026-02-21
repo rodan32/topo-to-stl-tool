@@ -381,8 +381,19 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
       e.layers.eachLayer((layer: any) => updateSelection(layer));
     };
 
+    // Update selection during vertex drag so model size updates in real time
+    const onEditVertex = (e: any) => {
+      const layers = e.layers ?? e.target;
+      if (layers && typeof layers.eachLayer === "function") {
+        layers.eachLayer((layer: any) => updateSelection(layer));
+      } else if (drawnItems.getLayers().length > 0) {
+        updateSelection(drawnItems.getLayers()[0]);
+      }
+    };
+
     map.on(L.Draw.Event.CREATED, onDrawCreated);
     map.on(L.Draw.Event.EDITED, onDrawEdited);
+    map.on("draw:editvertex" as any, onEditVertex);
     map.on(L.Draw.Event.DELETED, () => notifyBounds(null));
 
     // Ensure map has correct size so draw events hit the map (critical for selection)
@@ -405,6 +416,7 @@ const Map = forwardRef<MapRef, MapProps>(({ onBoundsChange, className, planet, o
     return () => {
       map.off(L.Draw.Event.CREATED, onDrawCreated);
       map.off(L.Draw.Event.EDITED, onDrawEdited);
+      map.off("draw:editvertex" as any, onEditVertex);
       map.off(L.Draw.Event.DELETED);
       resizeObserver?.disconnect();
       map.remove();

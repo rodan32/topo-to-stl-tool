@@ -427,6 +427,19 @@ const lat2tile = (lat: number, zoom: number) => {
   );
 };
 
+/** Convert lon/lat to pixel coordinates within a tile canvas covering [xMin..xMax] x [yMin..yMax]. */
+function lonToPixel(lon: number, zoom: number, xMin: number): number {
+  const n = Math.pow(2, zoom);
+  return ((lon + 180) / 360) * n * 256 - xMin * 256;
+}
+function latToPixel(lat: number, zoom: number, yMin: number): number {
+  const latRad = (lat * Math.PI) / 180;
+  const n = Math.pow(2, zoom);
+  const tileY =
+    ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n;
+  return (tileY - yMin) * 256;
+}
+
 // STL Binary Writer
 function createSTLBinary(vertices: number[], indices: number[]): Buffer {
   const triangleCount = indices.length / 3;
@@ -751,8 +764,19 @@ export class TerrainGenerator {
         return Number.isFinite(v) ? v : null;
       }
 
-      const imgX = Math.floor((col / (segmentsX - 1)) * (width - 1));
-      const imgY = Math.floor((row / (segmentsY - 1)) * (height - 1));
+      // Map mesh (col,row) to geographic bounds, then to tile pixel coords.
+      // Ensures the model centers on the selected bounds, not the full tile grid
+      // (which can extend beyond bounds at high latitudes or when bounds don't align with tile edges).
+      const lon =
+        bounds.west +
+        (col / Math.max(1, segmentsX - 1)) * (bounds.east - bounds.west);
+      const lat =
+        bounds.north -
+        (row / Math.max(1, segmentsY - 1)) * (bounds.north - bounds.south);
+      const px = lonToPixel(lon, actualZoom, xMin);
+      const py = latToPixel(lat, actualZoom, yMin);
+      const imgX = Math.max(0, Math.min(width - 1, Math.floor(px)));
+      const imgY = Math.max(0, Math.min(height - 1, Math.floor(py)));
 
       const index = (imgY * width + imgX) * 4;
       if (index < 0 || index >= data.length) return 0;

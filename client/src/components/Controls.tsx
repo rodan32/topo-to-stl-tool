@@ -43,6 +43,24 @@ interface ControlsProps {
   onClearSelection: () => void;
 }
 
+function formatModelSize(
+  bounds: { north: number; south: number; east: number; west: number },
+  modelWidth: number,
+  usePhysical: boolean
+): string {
+  const latSpan = bounds.north - bounds.south;
+  const lonSpan = bounds.east - bounds.west;
+  const centerLat = (bounds.north + bounds.south) / 2;
+  const cosLat = Math.max(0.01, Math.cos((centerLat * Math.PI) / 180));
+  const aspectRatio = Math.max(0.01, Math.min(100,
+    usePhysical
+      ? (lonSpan * cosLat) / Math.max(latSpan, 0.01)
+      : lonSpan / Math.max(latSpan, 0.01)
+  ));
+  const h = Math.round(modelWidth / aspectRatio);
+  return `${modelWidth} × ${h} mm`;
+}
+
 export default function Controls({ 
   onExport, 
   onPreview,
@@ -330,13 +348,23 @@ export default function Controls({
 
           {/* Aspect Ratio */}
           <div className="flex items-center justify-between">
-            <div>
+            <div className="min-w-0 flex-1">
               <Label className="text-xs font-mono uppercase">Physical Proportions</Label>
               <p className="text-[10px] text-muted-foreground mt-0.5">
-                {usePhysicalAspect ? "Real geography (cos lat)" : "Angular (match map)"}
+                {selectionBounds ? (
+                  <>
+                    {usePhysicalAspect ? (
+                      <>Real geography · <span className="text-foreground font-mono">{formatModelSize(selectionBounds, modelWidth[0], true)}</span></>
+                    ) : (
+                      <>Angular (match map) · <span className="text-foreground font-mono">{formatModelSize(selectionBounds, modelWidth[0], false)}</span></>
+                    )}
+                  </>
+                ) : (
+                  usePhysicalAspect ? "Real geography (cos lat)" : "Angular (match map)"
+                )}
               </p>
             </div>
-            <Switch checked={usePhysicalAspect} onCheckedChange={setUsePhysicalAspect} />
+            <Switch checked={usePhysicalAspect} onCheckedChange={setUsePhysicalAspect} className="shrink-0 ml-2" />
           </div>
 
           {/* Model Width */}
