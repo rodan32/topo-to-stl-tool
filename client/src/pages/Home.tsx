@@ -80,6 +80,7 @@ export default function Home() {
   const [planet, setPlanet] = useState<Planet>("earth");
   const [lithophane, setLithophane] = useState(false);
   const [invert, setInvert] = useState(false);
+  const [usePhysicalAspect, setUsePhysicalAspect] = useState(true);
 
   // Preview State
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -162,6 +163,7 @@ export default function Home() {
         planet: planet,
         lithophane: lithophane,
         invert: invert,
+        usePhysicalAspect,
       });
 
       // Decode base64 STL to Blob
@@ -378,6 +380,8 @@ export default function Home() {
         setLithophane={setLithophane}
         invert={invert}
         setInvert={setInvert}
+        usePhysicalAspect={usePhysicalAspect}
+        setUsePhysicalAspect={setUsePhysicalAspect}
         onStartDrawing={handleStartDrawing}
         onResizeSelection={handleResizeSelection}
         lastElevationSource={lastElevationSource}

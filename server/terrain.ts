@@ -36,6 +36,9 @@ interface TerrainOptions {
   planet: "earth" | "mars" | "moon" | "venus";
   lithophane: boolean;
   invert: boolean;
+  /** When true (default), use physical aspect (cos(lat)) so landmarks match real geography.
+   * When false, use angular aspect (lonSpan/latSpan) so a square degree selection yields a square model. */
+  usePhysicalAspect?: boolean;
 }
 
 // AWS Terrarium encoding: (r * 256 + g + b / 256) - 32768
@@ -664,14 +667,18 @@ export class TerrainGenerator {
     const latSpan = bounds.north - bounds.south;
     const lonSpan = bounds.east - bounds.west;
     const centerLat = (bounds.north + bounds.south) / 2;
-    // Physical aspect: at latitude φ, 1° lon = 111*cos(φ) km, 1° lat ≈ 111 km.
-    // So width:height = (lonSpan*cos(φ)) : latSpan. Keeps landmarks true to real geography.
     const cosLat = Math.max(0.01, Math.cos((centerLat * Math.PI) / 180));
-    const aspectRatio = (lonSpan * cosLat) / Math.max(latSpan, 0.1);
+    // Physical: width:height = (lonSpan*cos(φ)) : latSpan — landmarks match real geography.
+    // Angular: width:height = lonSpan : latSpan — square degree selection yields square model.
+    const usePhysicalAspect = this.options.usePhysicalAspect !== false;
+    const aspectRatio = usePhysicalAspect
+      ? (lonSpan * cosLat) / Math.max(latSpan, 0.1)
+      : lonSpan / Math.max(latSpan, 0.1);
 
-    // Ensure at least 2x2 so we always get quads and a valid watertight mesh
+    // Ensure at least 2x2 so we always get quads and a valid watertight mesh.
+    // Cap segmentsY to prevent stack overflow and memory explosion for tall/narrow selections.
     const segmentsX = Math.max(2, Math.min(width, maxSegments));
-    const segmentsY = Math.max(2, Math.round(segmentsX / aspectRatio));
+    const segmentsY = Math.max(2, Math.min(maxSegments, Math.round(segmentsX / aspectRatio)));
 
     const modelHeight = modelWidth / aspectRatio;
 

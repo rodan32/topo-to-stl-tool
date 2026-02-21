@@ -40,6 +40,7 @@ export const appRouter = router({
           planet: z.enum(["earth", "mars", "moon", "venus"]),
           lithophane: z.boolean(),
           invert: z.boolean(),
+          usePhysicalAspect: z.boolean().optional(),
         })
       )
       .mutation(async ({ input }) => {

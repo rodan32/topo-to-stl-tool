@@ -34,6 +34,8 @@ interface ControlsProps {
   setLithophane: (val: boolean) => void;
   invert: boolean;
   setInvert: (val: boolean) => void;
+  usePhysicalAspect: boolean;
+  setUsePhysicalAspect: (val: boolean) => void;
   onStartDrawing: () => void;
   onResizeSelection: () => void;
   lastElevationSource: "usgs3dep" | "terrarium" | "open-elevation" | "mars" | "moon" | "venus" | null;
@@ -63,6 +65,8 @@ export default function Controls({
   setLithophane,
   invert,
   setInvert,
+  usePhysicalAspect,
+  setUsePhysicalAspect,
   onStartDrawing,
   onResizeSelection,
   lastElevationSource,
@@ -139,6 +143,25 @@ export default function Controls({
               <div className="flex justify-between items-center">
                 <span className="text-muted-foreground">AREA:</span>
                 <span className="text-primary font-bold">READY</span>
+              </div>
+              <div className="flex justify-between items-center pt-1">
+                <span className="text-muted-foreground">Model size:</span>
+                <span className="text-foreground font-mono">
+                  {(() => {
+                    const latSpan = selectionBounds.north - selectionBounds.south;
+                    const lonSpan = selectionBounds.east - selectionBounds.west;
+                    const centerLat = (selectionBounds.north + selectionBounds.south) / 2;
+                    const cosLat = Math.max(0.01, Math.cos((centerLat * Math.PI) / 180));
+                    const aspectRatio = Math.max(0.01, Math.min(100,
+                      usePhysicalAspect
+                        ? (lonSpan * cosLat) / Math.max(latSpan, 0.01)
+                        : lonSpan / Math.max(latSpan, 0.01)
+                    ));
+                    const w = modelWidth[0];
+                    const h = Math.round(w / aspectRatio);
+                    return `${w} × ${h} mm`;
+                  })()}
+                </span>
               </div>
               <div className="flex gap-2 mt-2">
                 <Button
@@ -304,6 +327,17 @@ export default function Controls({
           )}
 
           <Separator />
+
+          {/* Aspect Ratio */}
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-xs font-mono uppercase">Physical Proportions</Label>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                {usePhysicalAspect ? "Real geography (cos lat)" : "Angular (match map)"}
+              </p>
+            </div>
+            <Switch checked={usePhysicalAspect} onCheckedChange={setUsePhysicalAspect} />
+          </div>
 
           {/* Model Width */}
           <div className="space-y-3">
