@@ -1054,9 +1054,8 @@ export class TerrainGenerator {
     ctx: any,
     planet: string
   ): Promise<void> {
+    let url = "";
     try {
-      let url = "";
-
       if (planet === "earth") {
         // Virtual-hosted S3 URL – avoids 404s that path-style can hit in some environments
         url = `https://elevation-tiles-prod.s3.amazonaws.com/terrarium/${z}/${x}/${y}.png`;
@@ -1068,7 +1067,10 @@ export class TerrainGenerator {
         url = `https://cartocdn-gusc.global.ssl.fastly.net/opmbuilder/api/v1/map/named/opm-moon-basemap-v0-1/all/${z}/${x}/${y}.png`;
       }
 
-      const response = await axios.get(url, { responseType: "arraybuffer" });
+      const response = await axios.get(url, {
+        responseType: "arraybuffer",
+        timeout: 15000,
+      });
       const img = await loadImage(
         Buffer.isBuffer(response.data) ? response.data : Buffer.from(response.data as ArrayBuffer)
       );
