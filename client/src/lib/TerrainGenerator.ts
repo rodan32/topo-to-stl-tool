@@ -401,7 +401,7 @@ export class TerrainGenerator {
       // The user reported "No Data" even for Earth, so fixing the main path is priority.
       
       if (planet === 'earth') {
-         img.src = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
+         img.src = `https://elevation-tiles-prod.s3.amazonaws.com/terrarium/${z}/${x}/${y}.png`;
       } else {
          // Fallback for planetary data - try to find a working mirror or warn
          // Using the same carto CDN as before but logging failures explicitly
